@@ -296,8 +296,15 @@ async function searchGoogle(q) {
   const url = 'https://www.googleapis.com/books/v1/volumes?' + new URLSearchParams({
     q: query, maxResults: '20', printType: 'books', key: CONFIG.GOOGLE_BOOKS_KEY
   });
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Google Books gaf status ' + r.status);
+  // Volledig paginaadres als referer meesturen: de API-sleutel is beperkt tot
+  // https://pwvanveen.github.io/boekenlijst/…; standaard stuurt de browser
+  // cross-origin alleen "https://pwvanveen.github.io/" mee → 403 van Google.
+  const r = await fetch(url, { referrerPolicy: 'no-referrer-when-downgrade' });
+  if (!r.ok) {
+    let reason = '';
+    try { reason = (await r.json())?.error?.message || ''; } catch (_) {}
+    throw new Error(`Google Books gaf status ${r.status}${reason ? ': ' + reason : ''}`);
+  }
   const j = await r.json();
   return (j.items || []).map((it) => {
     const v = it.volumeInfo || {};
@@ -307,7 +314,8 @@ async function searchGoogle(q) {
     if (cover) cover = cover.replace(/^http:/, 'https:').replace('&edge=curl', '');
     return {
       isbn: isbnFound,
-      title: v.title || '(zonder titel)',
+      // NL-titels komen vaak binnen als "Titel / druk 1"
+      title: (v.title || '(zonder titel)').replace(/\s*\/\s*druk\s*\d+\s*$/i, ''),
       authors: v.authors || null,
       pages: v.pageCount || null,
       publisher: v.publisher || null,
@@ -353,6 +361,7 @@ async function runSearch(q, forceOpenLibrary = false) {
 
   let results = [];
   let via = 'openlibrary';
+  state.googleError = null;
   try {
     if (!forceOpenLibrary) {
       try {
@@ -360,6 +369,7 @@ async function runSearch(q, forceOpenLibrary = false) {
         via = 'google';
       } catch (err) {
         console.warn('Google Books mislukt, val terug op Open Library:', err);
+        state.googleError = err.message;
       }
     }
     if (!results.length) {
@@ -386,9 +396,10 @@ function findExisting(r) {
 
 function renderResults(via) {
   const results = state.results;
-  $('#search-status').textContent = results.length
+  $('#search-status').textContent = (results.length
     ? `${results.length} ${results.length === 1 ? 'resultaat' : 'resultaten'} via ${SOURCE[via]}`
-    : 'Niets gevonden.';
+    : 'Niets gevonden.')
+    + (state.googleError ? ` (Google Books niet bereikbaar: ${state.googleError})` : '');
 
   $('#results').innerHTML = results.map((r, i) => {
     const existing = findExisting(r);
