@@ -60,6 +60,12 @@
         <h2>Boek zoeken</h2>
         <form id="search-form" class="search-form">
           <input type="search" id="search-q" placeholder="Titel, auteur of ISBN" autocomplete="off" enterkeyhint="search">
+          <button type="button" id="btn-scan" class="scan-btn" aria-label="Barcode scannen" title="Barcode scannen">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M3 7V4h3M18 4h3v3M21 17v3h-3M6 20H3v-3"/>
+              <path d="M7 8v8M10 8v8M13 8v8M16 8v8"/>
+            </svg>
+          </button>
           <button type="submit" class="primary">Zoek</button>
         </form>
         <p id="search-status" class="msg" role="status"></p>
@@ -96,13 +102,25 @@
       <label for="f-pages">Aantal pagina's</label>
       <input id="f-pages" type="number" min="1" inputmode="numeric">
 
-      <label for="f-status">Status</label>
-      <select id="f-status">
-        <option value="wil_lezen">Wil lezen</option>
-        <option value="bezig">Bezig</option>
-        <option value="gelezen">Gelezen</option>
-        <option value="gestopt">Gestopt</option>
-      </select>
+      <!-- Bij toevoegen: status kiezen met drie knoppen (B17) -->
+      <div id="f-status-quick-wrap" hidden>
+        <label id="f-status-quick-label">Toevoegen aan</label>
+        <div id="f-status-quick" class="segmented" role="radiogroup" aria-labelledby="f-status-quick-label">
+          <button type="button" role="radio" data-status="wil_lezen">🔖 Wil lezen</button>
+          <button type="button" role="radio" data-status="bezig">📖 Bezig</button>
+          <button type="button" role="radio" data-status="gelezen">✅ Gelezen</button>
+        </div>
+      </div>
+
+      <div id="f-status-wrap">
+        <label for="f-status">Status</label>
+        <select id="f-status">
+          <option value="wil_lezen">Wil lezen</option>
+          <option value="bezig">Bezig</option>
+          <option value="gelezen">Gelezen</option>
+          <option value="gestopt">Gestopt</option>
+        </select>
+      </div>
 
       <div id="f-dates" class="row">
         <div>
@@ -136,6 +154,17 @@
       </div>
     </form>
   </dialog>
+
+  <!-- Barcode scannen (fase 2a) -->
+  <div id="scanner" class="scanner" hidden role="dialog" aria-modal="true" aria-label="Barcode scannen">
+    <video id="scan-video" playsinline muted autoplay></video>
+    <div class="scan-frame" aria-hidden="true"></div>
+    <p id="scan-hint" class="scan-hint" role="status">Camera starten…</p>
+    <div class="scan-actions">
+      <button type="button" id="scan-torch" hidden aria-pressed="false">🔦 Zaklamp</button>
+      <button type="button" id="scan-cancel">Annuleren</button>
+    </div>
+  </div>
 
   <div id="toast" role="status"></div>
 </body>

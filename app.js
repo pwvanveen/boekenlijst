@@ -1,10 +1,15 @@
 'use strict';
 
 /* =========================================================
-   Boekenlijst – fase 1 (MVP)
+   Boekenlijst – fase 1 (MVP) + fase 2a (barcode scannen)
    Inloggen (magic link), zoeken (Google Books → Open Library),
-   toevoegen, status/datums, lijsten Bezig / Wil lezen / Gelezen per jaar.
+   toevoegen, status/datums, lijsten Bezig / Wil lezen / Gelezen per jaar,
+   ISBN-barcode scannen met de camera (BarcodeDetector, met polyfill).
    ========================================================= */
+
+// Polyfill voor BarcodeDetector (ZXing-WASM). Alleen geladen als de browser
+// zelf geen BarcodeDetector met EAN-13 heeft. Versie vastgezet (B11).
+const BARCODE_POLYFILL_URL = 'https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/dist/es/ponyfill.js';
 
 const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY, {
   auth: {
@@ -156,6 +161,7 @@ async function loadBooks() {
 /* ---------- Tabbladen ---------- */
 
 function showTab(tab) {
+  if (scan.active) closeScanner();
   document.querySelectorAll('.tab').forEach((el) => { el.hidden = el.dataset.tab !== tab; });
   document.querySelectorAll('#tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   window.scrollTo(0, 0);
@@ -365,11 +371,12 @@ async function runSearch(q, forceOpenLibrary = false) {
     $('#search-status').textContent = 'Zoeken mislukt. Controleer je internetverbinding en probeer opnieuw.';
     $('#search-status').classList.add('error');
     renderSearchExtra(null);
-    return;
+    return { ok: false, results: [], via: null };
   }
 
   state.results = results;
   renderResults(via);
+  return { ok: true, results, via };
 }
 
 function findExisting(r) {
@@ -446,6 +453,21 @@ function updateDateVisibility() {
   $('#f-dates').hidden = $('#f-status').value === 'wil_lezen';
 }
 
+// Statuskeuze bij toevoegen (B17): drie knoppen die de status-select aansturen
+function syncQuickStatus() {
+  const s = $('#f-status').value;
+  document.querySelectorAll('#f-status-quick button').forEach((b) =>
+    b.setAttribute('aria-checked', String(b.dataset.status === s)));
+}
+
+$('#f-status-quick').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-status]');
+  if (!btn) return;
+  $('#f-status').value = btn.dataset.status;
+  // Zelfde gedrag als bij de select: datums alvast invullen (B9)
+  $('#f-status').dispatchEvent(new Event('change'));
+});
+
 function openDialog(book) {
   state.editing = book;
   const isNew = !book.id;
@@ -469,6 +491,10 @@ function openDialog(book) {
   $('#f-notes').value = book.notes || '';
   $('#dlg-delete').hidden = isNew;
   $('#dlg-save').disabled = false;
+  // Nieuw boek: status kiezen met knoppen; bestaand boek: gewone keuzelijst (incl. Gestopt)
+  $('#f-status-quick-wrap').hidden = !isNew;
+  $('#f-status-wrap').hidden = isNew;
+  syncQuickStatus();
   updateDateVisibility();
 
   dlg.showModal();
@@ -479,6 +505,7 @@ $('#f-status').addEventListener('change', () => {
   const s = $('#f-status').value;
   if (s === 'bezig' && !$('#f-start').value) $('#f-start').value = today();
   if (s === 'gelezen' && !$('#f-finish').value) $('#f-finish').value = today();
+  syncQuickStatus();
   updateDateVisibility();
 });
 
@@ -572,6 +599,256 @@ $('#dlg-delete').addEventListener('click', async () => {
   if (state.results.length) renderResults(state.results[0]?.source || 'google');
   toast('Verwijderd');
 });
+
+/* ---------- Barcode scannen (fase 2a) ---------- */
+
+const scan = {
+  active: false,     // scanscherm open
+  session: 0,        // telt op bij elke opening; oude, late camera-antwoorden worden genegeerd
+  stream: null,
+  track: null,
+  timer: null,
+  busy: false,
+  torchOn: false,
+  pushedHistory: false,
+  detector: null     // hergebruikt tussen scans
+};
+
+// Geldig ISBN-13 als EAN-13: 978/979 + geldig controlecijfer
+function isValidIsbnBarcode(code) {
+  if (!/^97[89]\d{10}$/.test(code)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(code[i]) * (i % 2 ? 3 : 1);
+  return (10 - (sum % 10)) % 10 === Number(code[12]);
+}
+
+async function getDetector() {
+  if (scan.detector) return scan.detector;
+  // 1) Native detector (Android/Chrome via Google Play Services)
+  if ('BarcodeDetector' in window) {
+    try {
+      const formats = await window.BarcodeDetector.getSupportedFormats();
+      if (formats.includes('ean_13')) {
+        scan.detector = new window.BarcodeDetector({ formats: ['ean_13'] });
+        return scan.detector;
+      }
+    } catch (err) {
+      console.warn('Native BarcodeDetector niet bruikbaar, polyfill wordt geladen:', err);
+    }
+  }
+  // 2) Polyfill alleen als de native detector ontbreekt of geen EAN-13 kent
+  const mod = await import(BARCODE_POLYFILL_URL);
+  scan.detector = new mod.BarcodeDetector({ formats: ['ean_13'] });
+  return scan.detector;
+}
+
+function setScanHint(text, isError = false) {
+  const h = $('#scan-hint');
+  h.textContent = text;
+  h.classList.toggle('error', isError);
+}
+
+function cameraErrorText(err) {
+  switch (err?.name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Geen toestemming voor de camera. Tik op het slotje naast het webadres → Rechten (of Site-instellingen) → Camera → Toestaan, en probeer opnieuw.';
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'Geen camera gevonden op dit apparaat.';
+    case 'NotReadableError':
+    case 'AbortError':
+      return 'De camera is niet beschikbaar. Mogelijk gebruikt een andere app hem; sluit die en probeer opnieuw.';
+    default:
+      return 'De camera kon niet worden gestart' + (err?.message ? ': ' + err.message : '.');
+  }
+}
+
+async function openScanner() {
+  if (scan.active) return;
+  const session = ++scan.session;
+  scan.active = true;
+  scan.torchOn = false;
+  $('#scan-torch').hidden = true;
+  $('#scan-torch').setAttribute('aria-pressed', 'false');
+  $('#scan-cancel').textContent = 'Annuleren';
+  $('#scanner').classList.remove('has-error');
+  setScanHint('Camera starten…');
+  $('#scanner').hidden = false;
+  document.body.style.overflow = 'hidden';
+
+  // Terugknop van Android sluit het scanscherm i.p.v. de app te verlaten
+  history.pushState({ scanner: true }, '');
+  scan.pushedHistory = true;
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showScanError('Deze browser geeft geen toegang tot de camera. Gebruik Chrome en open de app via https.');
+    return;
+  }
+
+  // Camera en detector tegelijk voorbereiden
+  const cameraPromise = navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+  });
+
+  try {
+    await getDetector();
+  } catch (err) {
+    console.error('Scanner laden mislukt:', err);
+    // Camera die intussen toch start meteen weer uitzetten
+    cameraPromise.then((s) => s.getTracks().forEach((t) => t.stop())).catch(() => {});
+    if (session === scan.session && scan.active) {
+      showScanError('De scanner kon niet worden geladen. Controleer je internetverbinding en probeer opnieuw.');
+    }
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await cameraPromise;
+  } catch (err) {
+    console.error('Camera starten mislukt:', err);
+    if (session === scan.session && scan.active) showScanError(cameraErrorText(err));
+    return;
+  }
+
+  // Inmiddels geannuleerd? Camera direct weer uit.
+  if (session !== scan.session || !scan.active) {
+    stream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+
+  scan.stream = stream;
+  scan.track = stream.getVideoTracks()[0] || null;
+  const video = $('#scan-video');
+  video.srcObject = stream;
+  try { await video.play(); } catch (_) { /* autoplay+muted volstaat meestal */ }
+
+  // Zaklamp en continu scherpstellen alleen als de camera dat ondersteunt
+  const caps = scan.track?.getCapabilities ? scan.track.getCapabilities() : {};
+  if (caps.torch) $('#scan-torch').hidden = false;
+  if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+    scan.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+  }
+
+  setScanHint('Richt de camera op de streepjescode achterop het boek');
+  scanLoop(session);
+}
+
+function scanLoop(session) {
+  if (session !== scan.session || !scan.active) return;
+  scan.timer = setTimeout(async () => {
+    if (session !== scan.session || !scan.active) return;
+    const video = $('#scan-video');
+    if (!scan.busy && video.readyState >= 2 && video.videoWidth) {
+      scan.busy = true;
+      try {
+        const codes = await scan.detector.detect(video);
+        if (session !== scan.session || !scan.active) return;
+        // Alleen geldige ISBN's; andere codes (bijv. prijsbarcode) negeren en doorscannen
+        const hit = codes.map((c) => (c.rawValue || '').trim()).find(isValidIsbnBarcode);
+        if (hit) { onBarcode(hit); return; }
+      } catch (err) {
+        console.warn('Detectie mislukt (wordt opnieuw geprobeerd):', err);
+      } finally {
+        scan.busy = false;
+      }
+    }
+    scanLoop(session);
+  }, 150);
+}
+
+function showScanError(text) {
+  stopCamera();
+  $('#scanner').classList.add('has-error');
+  setScanHint(text, true);
+  $('#scan-torch').hidden = true;
+  $('#scan-cancel').textContent = 'Sluiten';
+}
+
+// Camera en detectielus stoppen (scanscherm blijft staan)
+function stopCamera() {
+  clearTimeout(scan.timer);
+  scan.timer = null;
+  if (scan.stream) scan.stream.getTracks().forEach((t) => t.stop());
+  scan.stream = null;
+  scan.track = null;
+  const video = $('#scan-video');
+  video.pause();
+  video.srcObject = null;
+}
+
+// Scanscherm sluiten. fromPopstate = gesloten via de terugknop.
+function closeScanner(fromPopstate = false) {
+  if (!scan.active) return;
+  scan.active = false;
+  scan.session++;
+  stopCamera();
+  $('#scanner').hidden = true;
+  document.body.style.overflow = '';
+  if (scan.pushedHistory) {
+    scan.pushedHistory = false;
+    if (!fromPopstate) history.back();
+  }
+}
+
+async function onBarcode(isbn) {
+  if (navigator.vibrate) { try { navigator.vibrate(80); } catch (_) {} }
+  closeScanner();
+
+  showTab('zoeken');
+  $('#search-q').value = isbn;
+
+  // Staat dit ISBN al in de lijst? Dan direct het bestaande boek openen
+  // (zoekresultaten worden op de achtergrond gewoon getoond, met label).
+  const own = state.books.find((b) => b.isbn === isbn);
+  if (own) {
+    toast('Dit boek staat al in je lijst');
+    openDialog(own);
+    runSearch(isbn);
+    return;
+  }
+
+  const res = await runSearch(isbn);
+  if (!res.ok) return; // foutmelding staat al bij de zoekresultaten
+
+  if (!res.results.length) {
+    toast('Geen gegevens gevonden – vul ze zelf in');
+    openDialog({ title: '', isbn, source: 'handmatig', status: 'wil_lezen' });
+    return;
+  }
+
+  // Bestaand boek (zelfde ISBN of external_id)? Dat openen.
+  const existing = res.results.map(findExisting).find(Boolean);
+  if (existing) { toast('Dit boek staat al in je lijst'); openDialog(existing); return; }
+
+  // Eén resultaat: meteen het toevoegvenster. Meer: de gebruiker kiest uit de lijst.
+  if (res.results.length === 1) openDialog({ ...res.results[0], isbn: res.results[0].isbn || isbn, status: 'wil_lezen' });
+}
+
+$('#btn-scan').addEventListener('click', openScanner);
+$('#scan-cancel').addEventListener('click', () => closeScanner());
+
+$('#scan-torch').addEventListener('click', async () => {
+  if (!scan.track) return;
+  const on = !scan.torchOn;
+  try {
+    await scan.track.applyConstraints({ advanced: [{ torch: on }] });
+    scan.torchOn = on;
+    $('#scan-torch').setAttribute('aria-pressed', String(on));
+  } catch (err) {
+    console.warn('Zaklamp schakelen mislukt:', err);
+    toast('Zaklamp werkt niet op deze camera');
+    $('#scan-torch').hidden = true;
+  }
+});
+
+// Terugknop
+window.addEventListener('popstate', () => { if (scan.active) closeScanner(true); });
+// App naar de achtergrond, ander tabblad, scherm uit → camera altijd stoppen
+document.addEventListener('visibilitychange', () => { if (document.hidden && scan.active) closeScanner(); });
+window.addEventListener('pagehide', () => { if (scan.active) closeScanner(); });
 
 /* ---------- Start ---------- */
 
