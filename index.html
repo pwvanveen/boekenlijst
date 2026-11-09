@@ -132,14 +132,22 @@
         <ul class="booklist" id="results"></ul>
         <div id="search-extra" class="search-extra"></div>
       </div>
+
+      <!-- Delen: tijdelijke deellijst samenstellen en opschonen (fase 2d, B22/B23) -->
+      <div class="tab" data-tab="delen" hidden>
+        <div id="share"></div>
+      </div>
     </section>
   </main>
 
+  <!-- Tabbalk: vijf tabbladen. Teller als badge op het icoon, zodat de labels
+       ook op 360 px breed op één regel passen (fase 2d). -->
   <nav id="tabbar" class="tabbar" hidden>
-    <button type="button" data-tab="bezig"><span class="ico">📖</span>Bezig <span class="count" data-count="bezig"></span></button>
-    <button type="button" data-tab="wil_lezen"><span class="ico">🔖</span>Wil lezen <span class="count" data-count="wil_lezen"></span></button>
-    <button type="button" data-tab="gelezen"><span class="ico">✅</span>Gelezen <span class="count" data-count="gelezen"></span></button>
-    <button type="button" data-tab="zoeken"><span class="ico">🔍</span>Zoeken</button>
+    <button type="button" data-tab="bezig"><span class="ico">📖<span class="count" data-count="bezig"></span></span><span class="lbl">Bezig</span></button>
+    <button type="button" data-tab="wil_lezen"><span class="ico">🔖<span class="count" data-count="wil_lezen"></span></span><span class="lbl">Wil lezen</span></button>
+    <button type="button" data-tab="gelezen"><span class="ico">✅<span class="count" data-count="gelezen"></span></span><span class="lbl">Gelezen</span></button>
+    <button type="button" data-tab="zoeken"><span class="ico">🔍</span><span class="lbl">Zoeken</span></button>
+    <button type="button" data-tab="delen"><span class="ico">📤</span><span class="lbl">Delen</span></button>
   </nav>
 
   <!-- Boek toevoegen / bewerken -->

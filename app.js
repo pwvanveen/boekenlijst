@@ -2,12 +2,13 @@
 
 /* =========================================================
    Boekenlijst – fase 1 (MVP) + 2a (barcode scannen) + 2b (covers)
-   + 2c (sorteren en filteren)
+   + 2c (sorteren en filteren) + 2d (tabblad Delen)
    Inloggen (magic link), zoeken (Google Books → Open Library),
    toevoegen, status/datums, lijsten Bezig / Wil lezen / Gelezen per jaar,
    ISBN-barcode scannen met de camera (BarcodeDetector, met polyfill),
    covers trapsgewijs (Google → Open Library op ISBN → eigen foto, B18),
-   sorteren en filteren per lijst via ⇅ en een onderpaneel (B19, B20).
+   sorteren en filteren per lijst via ⇅ en een onderpaneel (B19, B20),
+   tijdelijke deellijst samenstellen en opschonen (B22, B23).
    ========================================================= */
 
 // Voor het vangnet in index.html: app.js is gestart
@@ -43,6 +44,7 @@ const SOURCE = { google: 'Google Books', openlibrary: 'Open Library', handmatig:
 const state = {
   user: null,
   books: [],
+  booksLoaded: false, // eerste keer laden gelukt (Delen wacht hierop)
   results: [],
   lastQuery: '',
   editing: null,
@@ -87,12 +89,29 @@ function authorsText(a) {
   return (a || []).join(', ');
 }
 
-function toast(msg) {
+// Melding onderin. Optioneel met actieknop: toast(tekst, { action, onAction, duration })
+function toast(msg, opts = {}) {
   const t = $('#toast');
-  t.textContent = msg;
+  t.textContent = '';
+  const span = document.createElement('span');
+  span.textContent = msg;
+  t.append(span);
+  if (opts.action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-action';
+    btn.textContent = opts.action;
+    btn.addEventListener('click', () => {
+      clearTimeout(toast.timer);
+      t.classList.remove('show', 'has-action');
+      opts.onAction?.();
+    });
+    t.append(btn);
+  }
+  t.classList.toggle('has-action', !!opts.action);
   t.classList.add('show');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove('show'), 2800);
+  toast.timer = setTimeout(() => t.classList.remove('show', 'has-action'), opts.duration || 2800);
 }
 
 function withTimeout(promise, ms, message) {
@@ -165,6 +184,8 @@ function setUser(user) {
 
   if (!changed) return;
   resetViews(); // filters leeg, sortering van deze gebruiker (B20)
+  state.booksLoaded = false;
+  loadShare();  // deellijst van déze gebruiker (B23)
   if (user) {
     loadBooks();
   } else {
@@ -206,6 +227,7 @@ async function loadBooks() {
     return;
   }
   state.books = data || [];
+  state.booksLoaded = true;
   render();
 }
 
@@ -314,6 +336,7 @@ function render() {
   renderSimpleList('wil_lezen', metaWil,
     'Je verlanglijst is leeg. Voeg boeken toe via “Zoeken”.');
   renderGelezen();
+  renderShare();
 
   // Tellers in de tabbalk: altijd zonder filters
   const counts = {
@@ -558,8 +581,9 @@ function isBlank(v) {
   return v === null || v === undefined || (typeof v === 'string' && !v.trim());
 }
 
-function sortBooks(list, books) {
-  const { field, dir } = getView(list).sort;
+// sort: standaard de gekozen sortering van de lijst; Delen geeft de standaardsortering mee
+function sortBooks(list, books, sort = getView(list).sort) {
+  const { field, dir } = sort;
   const sign = dir === 'asc' ? 1 : -1;
   const isText = field === 'titel' || field === 'auteur';
   return [...books].sort((a, b) => {
@@ -904,6 +928,316 @@ document.addEventListener('click', (e) => {
   if (!li) return;
   const b = state.books.find((x) => x.id === li.dataset.id);
   if (b) openDialog(b);
+});
+
+/* ---------- Delen (fase 2d, B22/B23) ----------
+   Tijdelijke deellijst: samenstellen uit eigen boeken (stap 1) en opschonen
+   (stap 2). Alleen boek-id's + keuzes op het toestel; verandert niets aan de
+   echte lijsten. Daadwerkelijk delen volgt later (B24). */
+
+const SHARE_SOURCES = ['bezig', 'wil_lezen', 'gelezen'];
+const SHARE_UNDO_MS = 5000;
+
+const share = {
+  saved: null,   // { created_at, sources, years, book_ids } – years: null = alle jaren
+  adding: false, // stap 1 vanuit "Aanvullen"
+  draft: null,   // keuzes in stap 1: { sources: Set, years: Set | null }
+  warned: false  // melding "kan niet bewaren" al getoond
+};
+
+function shareKey() {
+  return `boekenlijst.share.${state.user?.id || 'anon'}`;
+}
+
+// Deellijst van de huidige gebruiker laden (bij inloggen / andere gebruiker)
+function loadShare() {
+  share.saved = null;
+  share.adding = false;
+  share.draft = null;
+  share.warned = false;
+  if (!state.user) return;
+  try {
+    const v = JSON.parse(localStorage.getItem(shareKey()) || 'null');
+    if (v && Array.isArray(v.book_ids)) {
+      share.saved = {
+        created_at: typeof v.created_at === 'string' ? v.created_at : new Date().toISOString(),
+        sources: Array.isArray(v.sources) ? v.sources.filter((x) => SHARE_SOURCES.includes(x)) : [],
+        years: Array.isArray(v.years) ? v.years.map(String) : null,
+        book_ids: [...new Set(v.book_ids.map(String))]
+      };
+    }
+  } catch (_) { /* geen of onleesbare deellijst: opnieuw beginnen */ }
+}
+
+// Opslag geblokkeerd → deellijst werkt alleen tijdens deze sessie (eenmalige melding)
+function saveShare() {
+  try {
+    if (share.saved) localStorage.setItem(shareKey(), JSON.stringify(share.saved));
+    else localStorage.removeItem(shareKey());
+  } catch (_) {
+    if (share.saved && !share.warned) {
+      share.warned = true;
+      toast('Je deellijst kan niet op dit toestel bewaard worden; hij blijft staan zolang de app open is.', { duration: 5000 });
+    }
+  }
+}
+
+const shareYear = (b) => (b.date_finished ? b.date_finished.slice(0, 4) : 'zonder');
+
+// Jaren in Gelezen (nieuwste eerst) en of er boeken zonder einddatum zijn
+function shareYearOptions() {
+  const read = state.books.filter((b) => b.status === 'gelezen');
+  const years = [...new Set(read.filter((b) => b.date_finished).map(shareYear))].sort((a, b) => b.localeCompare(a));
+  return { years, zonder: read.some((b) => !b.date_finished) };
+}
+
+function shareSourceCount(src) {
+  return state.books.filter((b) => b.status === src).length; // Gelezen zonder Gestopt
+}
+
+// Boeken die bij de keuzes in stap 1 horen
+function shareChoiceInvalid(draft) {
+  return !draft.sources.size || (draft.sources.has('gelezen') && !!draft.years && !draft.years.size);
+}
+
+function shareCandidates(draft) {
+  if (shareChoiceInvalid(draft)) return [];
+  return state.books.filter((b) => {
+    if (!draft.sources.has(b.status)) return false;
+    if (b.status !== 'gelezen') return true;
+    return !draft.years || draft.years.has(shareYear(b));
+  });
+}
+
+// Volgorde: Bezig → Wil lezen → Gelezen (nieuwste jaar eerst, zonder einddatum
+// achteraan) → Gestopt; binnen elke groep de standaardsortering van die lijst
+function shareOrdered(books) {
+  const by = (st) => books.filter((b) => b.status === st);
+  const out = [
+    ...sortBooks('bezig', by('bezig'), DEFAULT_SORT),
+    ...sortBooks('wil_lezen', by('wil_lezen'), DEFAULT_SORT)
+  ];
+  const read = by('gelezen');
+  const years = [...new Set(read.map(shareYear))].sort((a, b) =>
+    a === 'zonder' ? 1 : b === 'zonder' ? -1 : b.localeCompare(a));
+  for (const y of years) out.push(...sortBooks('gelezen', read.filter((b) => shareYear(b) === y), DEFAULT_SORT));
+  // Status intussen gewijzigd naar Gestopt: blijft staan, achteraan
+  out.push(...sortBooks('gelezen', by('gestopt'), DEFAULT_SORT));
+  return out;
+}
+
+function shareLabel(b) {
+  switch (b.status) {
+    case 'bezig': return 'Bezig';
+    case 'wil_lezen': return 'Wil lezen';
+    case 'gelezen': return b.date_finished ? `Gelezen ${shareYear(b)}` : 'Gelezen – zonder einddatum';
+    default: return STATUS[b.status] || b.status;
+  }
+}
+
+// Boeken in de deellijst die nog bestaan (verwijderde boeken vallen stil weg)
+function shareBooks() {
+  if (!share.saved) return [];
+  const ids = new Set(share.saved.book_ids);
+  return shareOrdered(state.books.filter((b) => ids.has(b.id)));
+}
+
+function newShareDraft() {
+  const counts = Object.fromEntries(SHARE_SOURCES.map((x) => [x, shareSourceCount(x)]));
+  if (!share.adding || !share.saved) return { sources: new Set(), years: null };
+  // Aanvullen: eerdere keuzes, voor zover er nog iets te kiezen valt
+  const { years: avail, zonder } = shareYearOptions();
+  const sources = new Set(share.saved.sources.filter((x) => counts[x] > 0));
+  let years = null;
+  if (share.saved.years) {
+    years = new Set(share.saved.years.filter((y) => (y === 'zonder' ? zonder : avail.includes(y))));
+    if (!years.size) years = null;
+  }
+  return { sources, years };
+}
+
+function renderShare() {
+  const el = $('#share');
+  if (!el) return;
+  if (!state.user) { el.innerHTML = ''; return; }
+  if (!state.booksLoaded) { el.innerHTML = '<h2>Delen</h2><p class="empty">Laden…</p>'; return; }
+
+  // Focus bewaren bij opnieuw opbouwen (toetsenbord/schermlezer)
+  const focusKey = document.activeElement && el.contains(document.activeElement)
+    ? document.activeElement.dataset.focus : null;
+
+  if (!share.saved || share.adding) renderShareChoose(el);
+  else renderShareList(el);
+
+  if (focusKey) el.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
+}
+
+// Stap 1: bronnen (en jaren) kiezen
+function renderShareChoose(el) {
+  if (!share.draft) share.draft = newShareDraft();
+  const d = share.draft;
+  const adding = share.adding && !!share.saved;
+
+  const sourceRows = SHARE_SOURCES.map((src) => {
+    const n = shareSourceCount(src);
+    const off = n === 0;
+    if (off) d.sources.delete(src);
+    return `<label class="share-source${off ? ' disabled' : ''}">
+      <input type="checkbox" data-share-source="${src}" data-focus="src-${src}" ${d.sources.has(src) ? 'checked' : ''} ${off ? 'disabled' : ''}>
+      <span>${esc(STATUS[src])}</span> <span class="n">(${n})</span>
+    </label>`;
+  }).join('');
+
+  let yearsHtml = '';
+  if (d.sources.has('gelezen')) {
+    const { years, zonder } = shareYearOptions();
+    const chip = (value, label, checked) =>
+      `<button type="button" role="checkbox" aria-checked="${checked}" data-share-year="${esc(value)}" data-focus="year-${esc(value)}">${esc(label)}</button>`;
+    yearsHtml = `<div class="share-years">
+      <label id="share-years-label">Gelezen in</label>
+      <div class="chips" role="group" aria-labelledby="share-years-label">
+        ${chip('alle', 'Alle jaren', !d.years)}
+        ${years.map((y) => chip(y, y, !!d.years?.has(y))).join('')}
+        ${zonder ? chip('zonder', 'Zonder einddatum', !!d.years?.has('zonder')) : ''}
+      </div>
+    </div>`;
+  }
+
+  // Voorvertoning
+  const inList = new Set(share.saved?.book_ids || []);
+  const cands = shareCandidates(d).filter((b) => !adding || !inList.has(b.id));
+  const n = cands.length;
+  let preview;
+  if (!d.sources.size) preview = 'Kies minstens één lijst.';
+  else if (shareChoiceInvalid(d)) preview = 'Kies minstens één jaar.';
+  else if (adding) preview = n ? `${n} ${n === 1 ? 'boek' : 'boeken'} erbij` : 'Geen nieuwe boeken bij deze keuze.';
+  else preview = `${n} ${n === 1 ? 'boek' : 'boeken'}`;
+
+  const noBooks = SHARE_SOURCES.every((x) => shareSourceCount(x) === 0);
+
+  el.innerHTML = `<h2>${adding ? 'Deellijst aanvullen' : 'Deellijst samenstellen'}</h2>
+    <p class="share-intro">${adding
+      ? 'Kies wat je wilt toevoegen. Boeken die al in je deellijst staan, komen er niet dubbel in.'
+      : 'Kies uit welke lijsten je boeken wilt delen; daarna kun je de selectie opschonen. Je eigen lijsten veranderen niet.'}</p>
+    ${noBooks ? '<p class="empty">Je hebt nog geen boeken om te delen. Voeg boeken toe via “Zoeken”.</p>' : `
+    <fieldset class="share-sources"><legend class="sr-only">Lijsten</legend>${sourceRows}</fieldset>
+    ${yearsHtml}
+    <div class="share-go">
+      <p class="msg" id="share-preview" role="status">${esc(preview)}</p>
+      <button type="button" class="primary" data-share-action="make" data-focus="make" ${n ? '' : 'disabled'}>${adding ? 'Toevoegen aan deellijst' : 'Lijst samenstellen'}</button>
+      ${adding ? '<button type="button" data-share-action="cancel-add" data-focus="cancel-add">Terug naar deellijst</button>' : ''}
+    </div>`}`;
+}
+
+// Stap 2: deellijst opschonen
+function renderShareList(el) {
+  const books = shareBooks();
+  const n = books.length;
+  const made = fmtDate(share.saved.created_at.slice(0, 10)) || '';
+
+  el.innerHTML = `<h2>Deellijst · ${n} ${n === 1 ? 'boek' : 'boeken'}</h2>
+    <p class="share-sub">Samengesteld op ${esc(made)} · alleen op dit toestel</p>
+    ${n ? `<ul class="booklist share-list">${books.map((b) => `<li class="book share-item" data-share-id="${esc(b.id)}">
+        ${coverHtml(b)}
+        <div class="info">
+          <div class="title">${esc(b.title)}</div>
+          <div class="authors">${esc(authorsText(b.authors))}</div>
+          <span class="share-label">${esc(shareLabel(b))}</span>
+        </div>
+        <button type="button" class="share-remove" data-share-remove="${esc(b.id)}" data-focus="rm-${esc(b.id)}"
+                aria-label="“${esc(b.title)}” uit de deellijst halen" title="Uit de deellijst halen">✕</button>
+      </li>`).join('')}</ul>`
+    : '<p class="empty">Je deellijst is leeg.</p>'}
+    <div class="share-actions">
+      <button type="button" data-share-action="add" data-focus="add">Aanvullen</button>
+      <button type="button" ${n ? '' : 'class="primary"'} data-share-action="reset" data-focus="reset">Opnieuw beginnen</button>
+    </div>`;
+}
+
+function shareMake() {
+  const d = share.draft;
+  if (!d) return;
+  const adding = share.adding && !!share.saved;
+  const inList = new Set(share.saved?.book_ids || []);
+  const add = shareOrdered(shareCandidates(d).filter((b) => !inList.has(b.id))).map((b) => b.id);
+  if (!add.length) return;
+  const choices = { sources: SHARE_SOURCES.filter((x) => d.sources.has(x)), years: d.years ? [...d.years] : null };
+  if (adding) {
+    share.saved = { ...share.saved, ...choices, book_ids: [...share.saved.book_ids, ...add] };
+  } else {
+    share.saved = { created_at: new Date().toISOString(), ...choices, book_ids: add };
+  }
+  share.adding = false;
+  share.draft = null;
+  saveShare();
+  renderShare();
+  window.scrollTo(0, 0);
+  if (adding) toast(`${add.length} ${add.length === 1 ? 'boek' : 'boeken'} toegevoegd aan je deellijst`);
+}
+
+function shareRemove(id) {
+  const saved = share.saved;
+  if (!saved) return;
+  const idx = saved.book_ids.indexOf(id);
+  if (idx < 0) return;
+  const b = state.books.find((x) => x.id === id);
+  saved.book_ids.splice(idx, 1);
+  saveShare();
+  renderShare();
+  toast(`“${b?.title || 'Boek'}” uit de deellijst`, {
+    action: 'Ongedaan maken',
+    duration: SHARE_UNDO_MS,
+    onAction: () => {
+      // Alleen als het nog dezelfde deellijst is (niet opnieuw begonnen / andere gebruiker)
+      if (share.saved !== saved || saved.book_ids.includes(id)) return;
+      saved.book_ids.splice(Math.min(idx, saved.book_ids.length), 0, id);
+      saveShare();
+      renderShare();
+    }
+  });
+}
+
+function shareReset() {
+  const hasBooks = shareBooks().length > 0;
+  if (hasBooks && !confirm('Deellijst wissen en opnieuw beginnen? Je eigen lijsten veranderen niet.')) return;
+  share.saved = null;
+  share.adding = false;
+  share.draft = null;
+  saveShare();
+  renderShare();
+  window.scrollTo(0, 0);
+}
+
+$('#share').addEventListener('change', (e) => {
+  const src = e.target.dataset?.shareSource;
+  if (!src || !share.draft) return;
+  if (e.target.checked) share.draft.sources.add(src); else share.draft.sources.delete(src);
+  renderShare();
+});
+
+$('#share').addEventListener('click', (e) => {
+  const rm = e.target.closest('[data-share-remove]');
+  if (rm) { shareRemove(rm.dataset.shareRemove); return; }
+
+  const yr = e.target.closest('[data-share-year]');
+  if (yr && share.draft) {
+    const y = yr.dataset.shareYear;
+    const d = share.draft;
+    if (y === 'alle') {
+      d.years = null;                       // Alle jaren (standaard)
+    } else {
+      if (!d.years) d.years = new Set();    // van "Alle" naar losse jaren
+      if (d.years.has(y)) d.years.delete(y); else d.years.add(y);
+    }
+    renderShare();
+    return;
+  }
+
+  const act = e.target.closest('[data-share-action]')?.dataset.shareAction;
+  if (act === 'make') shareMake();
+  else if (act === 'add') { share.adding = true; share.draft = null; renderShare(); window.scrollTo(0, 0); }
+  else if (act === 'cancel-add') { share.adding = false; share.draft = null; renderShare(); }
+  else if (act === 'reset') shareReset();
 });
 
 /* ---------- Zoeken ---------- */

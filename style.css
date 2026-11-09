@@ -183,23 +183,32 @@ button:disabled { opacity: .6; cursor: default; }
 .year-label { font-weight: 700; font-size: 1.1rem; flex: 1; }
 .year-stats { color: var(--muted); font-size: .85rem; }
 
-/* Tabbalk */
+/* Tabbalk (fase 2d: vijf tabbladen; teller als badge op het icoon) */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
   background: var(--card); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
 }
 .tabbar button {
   border: none; border-radius: 0; background: none; color: var(--muted);
-  height: var(--tabbar-h); padding: 6px 2px; font-size: .75rem;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  height: var(--tabbar-h); padding: 6px 2px; font-size: .75rem; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
 }
-.tabbar button .ico { font-size: 1.25rem; }
+.tabbar button .ico { position: relative; font-size: 1.25rem; line-height: 1.1; }
+.tabbar button .lbl { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tabbar button.active { color: var(--accent); font-weight: 700; }
+.tabbar .count {
+  position: absolute; top: -5px; left: calc(100% - 7px);
+  min-width: 18px; height: 16px; padding: 0 4px; border-radius: 8px;
+  background: var(--line); color: var(--text);
+  font-size: .62rem; font-weight: 600; line-height: 16px; text-align: center;
+}
+.tabbar button.active .count { background: var(--accent); color: var(--accent-text); }
 .count:empty { display: none; }
-.count::before { content: "("; }
-.count::after { content: ")"; }
+@media (max-width: 340px) {
+  .tabbar button { font-size: .68rem; }
+}
 
 /* Dialoog */
 dialog {
@@ -227,6 +236,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 #toast {
   position: fixed; left: 50%; transform: translate(-50%, 20px);
   bottom: calc(var(--tabbar-h) + 16px + env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 12px;
   background: var(--text); color: var(--bg);
   padding: 10px 16px; border-radius: 99px; font-size: .9rem;
   opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
@@ -295,4 +305,49 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .flat-summary {
   margin: 0 0 8px; padding: 10px 4px; border-bottom: 1px solid var(--line);
   color: var(--muted); font-size: .85rem; text-align: right;
+}
+
+/* Melding met actieknop (Ongedaan maken, fase 2d) */
+:root { --toast-action: #9fd8c4; }
+@media (prefers-color-scheme: dark) { :root { --toast-action: #2f5d50; } }
+#toast.has-action { border-radius: 12px; padding: 6px 6px 6px 16px; width: max-content; }
+#toast.has-action.show { pointer-events: auto; }
+.toast-action {
+  flex: none; border: none; background: none; padding: 8px 10px;
+  color: var(--toast-action); font-weight: 700; font-size: inherit;
+}
+
+/* Delen (fase 2d, B22/B23) */
+.share-intro { color: var(--muted); font-size: .9rem; margin: -4px 0 12px; }
+.share-sources { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; }
+.share-source {
+  display: flex; align-items: center; gap: 12px; margin: 0;
+  padding: 12px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); color: var(--text); font-size: 1rem; cursor: pointer;
+}
+.share-source input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--accent); }
+.share-source .n { color: var(--muted); }
+.share-source.disabled { opacity: .55; cursor: default; }
+.share-years { margin-top: 4px; }
+.share-years .chips button[aria-checked="true"]::before { content: "✓ "; }
+.share-go { margin-top: 16px; display: grid; gap: 8px; }
+.share-go .msg { text-align: center; margin: 0; }
+.share-go button { width: 100%; }
+.share-sub { color: var(--muted); font-size: .85rem; margin: -6px 0 12px; }
+.share-item { cursor: default; align-items: center; }
+.share-item:active { transform: none; }
+.share-label {
+  display: inline-block; margin-top: 4px; padding: 1px 8px; border-radius: 99px;
+  border: 1px solid var(--line); color: var(--muted); font-size: .75rem;
+}
+.share-remove {
+  flex: none; align-self: center; width: 40px; height: 40px; padding: 0;
+  border: none; background: none; color: var(--muted); font-size: 1.1rem; border-radius: 50%;
+}
+.share-remove:active { background: var(--line); }
+.share-actions { display: flex; gap: 8px; margin-top: 12px; }
+.share-actions button { flex: 1; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
