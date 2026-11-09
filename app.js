@@ -1,15 +1,29 @@
 'use strict';
 
 /* =========================================================
-   Boekenlijst – fase 1 (MVP) + fase 2a (barcode scannen)
+   Boekenlijst – fase 1 (MVP) + 2a (barcode scannen) + 2b (covers)
    Inloggen (magic link), zoeken (Google Books → Open Library),
    toevoegen, status/datums, lijsten Bezig / Wil lezen / Gelezen per jaar,
-   ISBN-barcode scannen met de camera (BarcodeDetector, met polyfill).
+   ISBN-barcode scannen met de camera (BarcodeDetector, met polyfill),
+   covers trapsgewijs (Google → Open Library op ISBN → eigen foto, B18).
    ========================================================= */
+
+// Voor het vangnet in index.html: app.js is gestart
+window.__appStarted = true;
 
 // Polyfill voor BarcodeDetector (ZXing-WASM). Alleen geladen als de browser
 // zelf geen BarcodeDetector met EAN-13 heeft. Versie vastgezet (B11).
 const BARCODE_POLYFILL_URL = 'https://cdn.jsdelivr.net/npm/barcode-detector@3.2.3/dist/es/ponyfill.js';
+
+// Maximale wachttijd op het ophalen van de sessie bij het opstarten
+const SESSION_TIMEOUT_MS = 10000;
+
+// Eigen covers (B18): Supabase Storage-bucket en fotoformaat
+const COVER_BUCKET = 'covers';
+const COVER_MAX_W = 600;
+const COVER_MAX_H = 1000;
+const COVER_QUALITY = 0.8;
+const COVER_MAX_BYTES = 1024 * 1024; // gelijk aan de bucketlimiet
 
 const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY, {
   auth: {
@@ -30,6 +44,9 @@ const state = {
   results: [],
   lastQuery: '',
   editing: null,
+  // Cover-wijziging in het open venster: { url } = gevonden via Open Library,
+  // { blob, preview } = eigen foto (wordt pas bij Opslaan geüpload)
+  coverDraft: null,
   openYears: new Set([String(new Date().getFullYear())])
 };
 
@@ -72,6 +89,14 @@ function toast(msg) {
   toast.timer = setTimeout(() => t.classList.remove('show'), 2800);
 }
 
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })
+  ]).finally(() => clearTimeout(timer));
+}
+
 function isIsbn(q) {
   const d = q.replace(/[-\s]/g, '');
   return /^(\d{9}[\dXx]|\d{13})$/.test(d) ? d.toUpperCase() : null;
@@ -98,8 +123,27 @@ async function initAuth() {
     setTimeout(() => setUser(session?.user ?? null), 0);
   });
 
-  const { data } = await sb.auth.getSession();
+  let data;
+  try {
+    ({ data } = await withTimeout(sb.auth.getSession(), SESSION_TIMEOUT_MS, 'time-out'));
+  } catch (err) {
+    console.error('Sessie ophalen mislukt:', err);
+    // Intussen alsnog ingelogd via onAuthStateChange? Dan niets tonen.
+    if (state.user) return;
+    showStartError(err.message === 'time-out'
+      ? 'De verbinding met de server duurt te lang. Controleer je internetverbinding en probeer opnieuw.'
+      : 'Opstarten mislukt: ' + err.message);
+    return;
+  }
   setUser(data.session?.user ?? null);
+}
+
+function showStartError(text) {
+  $('#view-loading').innerHTML = `<div class="card start-error">
+      <p>${esc(text)}</p>
+      <button type="button" class="primary" id="btn-retry">Opnieuw proberen</button>
+    </div>`;
+  $('#btn-retry').addEventListener('click', () => location.reload());
 }
 
 function setUser(user) {
@@ -173,11 +217,34 @@ document.querySelectorAll('#tabbar button').forEach((b) =>
 
 /* ---------- Weergave ---------- */
 
+// Placeholder zonder cover: titel en auteur op een gekleurd "boekje".
+// De kleur hangt af van de titel, dus blijft per boek gelijk.
+function placeholderHtml(b) {
+  const title = (b.title || '').trim() || 'Zonder titel';
+  let h = 0;
+  for (const c of title) h = (h * 31 + c.codePointAt(0)) % 360;
+  const author = (b.authors || [])[0] || '';
+  return `<div class="cover cover-empty" style="--hue:${h}" aria-hidden="true">
+    <span class="ph-title">${esc(title)}</span>
+    ${author ? `<span class="ph-author">${esc(author)}</span>` : ''}
+  </div>`;
+}
+
 function coverHtml(b) {
   return b.cover_url
-    ? `<img class="cover" src="${esc(b.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
-    : `<div class="cover cover-empty">${esc((b.title || '?').trim().charAt(0).toUpperCase())}</div>`;
+    ? `<img class="cover" src="${esc(b.cover_url)}" alt="" loading="lazy" referrerpolicy="no-referrer"
+         data-title="${esc(b.title || '')}" data-author="${esc((b.authors || [])[0] || '')}">`
+    : placeholderHtml(b);
 }
+
+// Cover die niet laadt (link verlopen, bron weg) → placeholder i.p.v. kapot plaatje
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains('cover')) return;
+  const ph = document.createElement('div');
+  ph.innerHTML = placeholderHtml({ title: img.dataset.title, authors: img.dataset.author ? [img.dataset.author] : [] });
+  img.replaceWith(ph.firstElementChild);
+}, true);
 
 function bookLi(b, metaHtml = '') {
   return `<li class="book" data-id="${esc(b.id)}">
@@ -456,6 +523,131 @@ $('#results').addEventListener('click', (e) => {
   openDialog(existing || { ...r, status: 'wil_lezen' });
 });
 
+/* ---------- Covers (fase 2b, B18) ---------- */
+
+const olCoverCache = new Map(); // isbn → Promise<url|null>
+
+// Stap 2 van de cover-trap: Open Library-cover op ISBN. Met ?default=false geeft
+// Open Library een 404 als er geen cover is; dat vangen we op met een Image.
+function probeOpenLibraryCover(isbn) {
+  if (!isbn) return Promise.resolve(null);
+  if (olCoverCache.has(isbn)) return olCoverCache.get(isbn);
+  const url = `https://covers.openlibrary.org/b/isbn/${encodeURIComponent(isbn)}-M.jpg?default=false`;
+  const p = new Promise((resolve) => {
+    const img = new Image();
+    img.referrerPolicy = 'no-referrer';
+    const timer = setTimeout(() => { img.onload = img.onerror = null; resolve(null); }, 8000);
+    img.onload = () => { clearTimeout(timer); resolve(img.naturalWidth > 1 ? url : null); };
+    img.onerror = () => { clearTimeout(timer); resolve(null); };
+    img.src = url;
+  });
+  // Mislukte poging (bijv. time-out) niet blijvend onthouden
+  p.then((u) => { if (!u) olCoverCache.delete(isbn); });
+  olCoverCache.set(isbn, p);
+  return p;
+}
+
+// Foto verkleinen in de browser: max. ~600 px breed, JPEG (doel ≈ 100 KB)
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Foto kon niet worden gelezen')); };
+    img.src = url;
+  });
+}
+
+async function resizePhoto(file) {
+  const img = await loadImage(file); // Chrome draait de foto zelf goed (EXIF)
+  const scale = Math.min(1, COVER_MAX_W / img.naturalWidth, COVER_MAX_H / img.naturalHeight);
+  const w = Math.max(1, Math.round(img.naturalWidth * scale));
+  const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; // transparante delen (bijv. PNG) niet zwart
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  const toBlob = (q) => new Promise((res) => canvas.toBlob(res, 'image/jpeg', q));
+  let blob = await toBlob(COVER_QUALITY);
+  if (blob && blob.size > COVER_MAX_BYTES) blob = await toBlob(0.6);
+  if (!blob) throw new Error('Foto kon niet worden omgezet');
+  if (blob.size > COVER_MAX_BYTES) throw new Error('Foto is te groot');
+  return blob;
+}
+
+function isOwnCover(url) {
+  return typeof url === 'string' && url.includes(`/storage/v1/object/public/${COVER_BUCKET}/`);
+}
+
+function coverPath(book) {
+  return `${book.user_id}/${book.id}.jpg`;
+}
+
+async function uploadCover(book, blob) {
+  const path = coverPath(book);
+  const { error } = await sb.storage.from(COVER_BUCKET).upload(path, blob, {
+    upsert: true,
+    contentType: 'image/jpeg',
+    cacheControl: '3600'
+  });
+  if (error) throw error;
+  const { data } = sb.storage.from(COVER_BUCKET).getPublicUrl(path);
+  // ?v= zorgt dat een vervangen cover niet uit de cache komt
+  return `${data.publicUrl}?v=${Date.now()}`;
+}
+
+function clearCoverDraft() {
+  if (state.coverDraft?.preview) URL.revokeObjectURL(state.coverDraft.preview);
+  state.coverDraft = null;
+}
+
+// Cover in het venster tonen, rekening houdend met een nog niet opgeslagen wijziging
+function renderDialogCover() {
+  const b = state.editing;
+  if (!b) return;
+  const d = state.coverDraft;
+  const shown = d?.preview || d?.url || b.cover_url || null;
+  $('#dlg-cover').innerHTML = coverHtml({ ...b, cover_url: shown });
+  $('#btn-photo').textContent = shown ? '📷 Cover vervangen' : '📷 Foto van cover maken';
+  $('#photo-msg').textContent = d?.blob
+    ? 'Nieuwe foto – wordt bewaard bij Opslaan.'
+    : d?.url ? 'Cover gevonden via Open Library – wordt bewaard bij Opslaan.' : '';
+}
+
+// Boek zonder cover maar met ISBN: Open Library proberen (stap 2 van de trap)
+async function tryOpenLibraryForDialog(book) {
+  if (book.cover_url || !book.isbn) return;
+  const url = await probeOpenLibraryCover(book.isbn);
+  // Venster intussen dicht, ander boek, of al een eigen foto? Dan niets doen.
+  if (!url || state.editing !== book || !dlg.open || state.coverDraft) return;
+  state.coverDraft = { url };
+  renderDialogCover();
+}
+
+$('#btn-photo').addEventListener('click', () => $('#f-photo').click());
+
+$('#f-photo').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = ''; // zelfde bestand opnieuw kiezen moet ook werken
+  if (!file || !state.editing) return;
+  const book = state.editing;
+  $('#photo-msg').textContent = 'Foto verwerken…';
+  try {
+    const blob = await resizePhoto(file);
+    if (state.editing !== book) return;
+    clearCoverDraft();
+    state.coverDraft = { blob, preview: URL.createObjectURL(blob) };
+    renderDialogCover();
+  } catch (err) {
+    console.error('Foto verwerken mislukt:', err);
+    $('#photo-msg').textContent = '';
+    toast('Foto verwerken mislukt: ' + err.message);
+  }
+});
+
 /* ---------- Toevoegen / bewerken ---------- */
 
 const dlg = $('#dlg');
@@ -480,11 +672,12 @@ $('#f-status-quick').addEventListener('click', (e) => {
 });
 
 function openDialog(book) {
+  clearCoverDraft();
   state.editing = book;
   const isNew = !book.id;
 
   $('#dlg-heading').textContent = isNew ? 'Boek toevoegen' : 'Boek bewerken';
-  $('#dlg-cover').innerHTML = coverHtml(book);
+  renderDialogCover();
   $('#dlg-meta').textContent = [
     book.publisher,
     book.published_year,
@@ -509,7 +702,13 @@ function openDialog(book) {
   updateDateVisibility();
 
   dlg.showModal();
+  tryOpenLibraryForDialog(book);
 }
+
+dlg.addEventListener('close', () => {
+  clearCoverDraft();
+  $('#photo-msg').textContent = '';
+});
 
 // Bij statuswissel datums alvast invullen met vandaag
 $('#f-status').addEventListener('change', () => {
@@ -554,6 +753,10 @@ $('#book-form').addEventListener('submit', async (e) => {
     notes: $('#f-notes').value.trim() || null
   };
 
+  // Open Library-cover die in het venster is gevonden meteen meenemen
+  const draft = state.coverDraft;
+  if (draft?.url && !draft.blob) fields.cover_url = draft.url;
+
   $('#dlg-save').disabled = true;
   let res;
   if (b.id) {
@@ -572,14 +775,31 @@ $('#book-form').addEventListener('submit', async (e) => {
       ...fields
     }).select().single();
   }
-  $('#dlg-save').disabled = false;
 
   if (res.error) {
+    $('#dlg-save').disabled = false;
     toast('Opslaan mislukt: ' + res.error.message);
     return;
   }
 
-  const saved = res.data;
+  let saved = res.data;
+  let photoError = null;
+
+  // Eigen foto: pas uploaden als het boek een id heeft (B18)
+  if (draft?.blob) {
+    try {
+      const url = await uploadCover(saved, draft.blob);
+      const upd = await sb.from('books')
+        .update({ cover_url: url, updated_at: new Date().toISOString() })
+        .eq('id', saved.id).select().single();
+      if (upd.error) throw upd.error;
+      saved = upd.data;
+    } catch (err) {
+      console.error('Cover uploaden mislukt:', err);
+      photoError = err.message || String(err);
+    }
+  }
+  $('#dlg-save').disabled = false;
   const idx = state.books.findIndex((x) => x.id === saved.id);
   if (idx >= 0) state.books[idx] = saved; else state.books.unshift(saved);
 
@@ -587,7 +807,9 @@ $('#book-form').addEventListener('submit', async (e) => {
   render();
   if (state.results.length) renderResults(state.results[0]?.source || 'google');
 
-  if (!b.id) {
+  if (photoError) {
+    toast('Boek opgeslagen, maar de foto niet: ' + photoError);
+  } else if (!b.id) {
     toast(`Toegevoegd aan “${STATUS[status]}”`);
   } else {
     toast('Opgeslagen');
@@ -604,6 +826,12 @@ $('#dlg-delete').addEventListener('click', async () => {
   if (!confirm(`“${b.title}” verwijderen? Dit kan niet ongedaan worden gemaakt.`)) return;
   const { error } = await sb.from('books').delete().eq('id', b.id);
   if (error) { toast('Verwijderen mislukt: ' + error.message); return; }
+  // Eigen cover-foto ook weggooien (best effort; mislukken is geen probleem)
+  if (isOwnCover(b.cover_url)) {
+    sb.storage.from(COVER_BUCKET).remove([coverPath(b)])
+      .then(({ error: e }) => { if (e) console.warn('Cover verwijderen mislukt:', e); })
+      .catch((e) => console.warn('Cover verwijderen mislukt:', e));
+  }
   state.books = state.books.filter((x) => x.id !== b.id);
   dlg.close();
   render();

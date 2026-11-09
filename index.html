@@ -6,11 +6,59 @@
   <meta name="theme-color" content="#2f5d50">
   <title>Boekenlijst</title>
   <link rel="stylesheet" href="style.css">
+  <script>
+    /* Foutmelding-vangnet: fouten en niet-geladen bestanden verschijnen op het
+       scherm in plaats van een eindeloos "Laden…". Staat bewust inline en
+       vóór de andere scripts, zodat het ook werkt als die niet laden. */
+    (function () {
+      function show(msg) {
+        var el = document.getElementById('fatal');
+        if (!el) { document.addEventListener('DOMContentLoaded', function () { show(msg); }); return; }
+        // Eerste melding laten staan: dat is meestal de oorzaak, de rest zijn gevolgen
+        if (!el.hidden) return;
+        document.getElementById('fatal-msg').textContent = msg;
+        el.hidden = false;
+      }
+      window.showFatal = show;
+
+      window.addEventListener('error', function (e) {
+        var t = e.target;
+        if (t && t !== window) {
+          // Alleen scripts en stylesheets; een cover die niet laadt is geen fout
+          if (t.tagName === 'SCRIPT') show('Een onderdeel van de app kon niet worden geladen (' + (t.src || 'script') + '). Controleer je internetverbinding.');
+          else if (t.tagName === 'LINK') show('De opmaak kon niet worden geladen (' + t.href + ').');
+          return;
+        }
+        if (e.filename && e.filename.indexOf('-extension://') !== -1) return;
+        show(e.message || 'Onbekende fout');
+      }, true);
+
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason;
+        show((r && r.message) || String(r));
+      });
+
+      // Waakhond: app.js nooit gestart (bestand ontbreekt, syntaxfout, …)
+      setTimeout(function () {
+        if (!window.__appStarted) show('De app start niet op. Probeer de pagina opnieuw te laden.');
+      }, 15000);
+    })();
+  </script>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script defer src="config.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
+  <!-- Foutmelding-vangnet (opmaak inline: werkt ook als style.css niet laadt) -->
+  <div id="fatal" role="alert" hidden
+       style="position:sticky;top:0;z-index:50;background:#b3261e;color:#fff;padding:12px 16px;font:15px/1.4 system-ui,sans-serif">
+    <p style="margin:0 0 8px"><strong>Er ging iets mis.</strong> <span id="fatal-msg"></span></p>
+    <button type="button" onclick="location.reload()"
+            style="font:inherit;padding:6px 12px;border:0;border-radius:6px;background:#fff;color:#b3261e;font-weight:600">Opnieuw laden</button>
+    <button type="button" onclick="document.getElementById('fatal').hidden=true"
+            style="font:inherit;padding:6px 12px;border:1px solid #fff;border-radius:6px;background:transparent;color:#fff">Sluiten</button>
+  </div>
+
   <header class="topbar">
     <h1>Boekenlijst</h1>
     <div class="topbar-right">
@@ -90,6 +138,9 @@
         <div>
           <h2 id="dlg-heading">Boek</h2>
           <p id="dlg-meta" class="meta"></p>
+          <button type="button" id="btn-photo" class="photo-btn">📷 Foto van cover maken</button>
+          <input type="file" id="f-photo" accept="image/*" capture="environment" hidden>
+          <p id="photo-msg" class="meta" role="status"></p>
         </div>
       </div>
 
