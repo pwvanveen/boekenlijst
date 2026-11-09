@@ -3,9 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#2f5d50">
+  <!-- Kleur statusbalk (Android): sluit aan op de achtergrond, ook in donkere modus -->
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f4ef">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#161917">
   <title>Boekenlijst</title>
-  <link rel="stylesheet" href="style.css?v=2f2">
+  <!-- Beginschermicoon en app-weergave (fase 2g, B31). Bewust GEEN
+       apple-mobile-web-app-capable: op iPhone een gewone Safari-snelkoppeling,
+       zodat inloggen via de maillink blijft werken. -->
+  <link rel="manifest" href="manifest.webmanifest?v=2g1">
+  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=2g1">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2g1">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2g1">
+  <meta name="apple-mobile-web-app-title" content="Boekenlijst">
+  <link rel="stylesheet" href="style.css?v=2g1">
   <script>
     /* Foutmelding-vangnet: fouten en niet-geladen bestanden verschijnen op het
        scherm in plaats van een eindeloos "Laden…". Staat bewust inline en
@@ -47,8 +57,8 @@
   <!-- ?v=…: versienummer van deze levering. Bij elke nieuwe versie ophogen, zodat
        de browser geen oude style.css/app.js uit de cache combineert met een nieuwe pagina. -->
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="config.js?v=2f2"></script>
-  <script defer src="app.js?v=2f2"></script>
+  <script defer src="config.js?v=2g1"></script>
+  <script defer src="app.js?v=2g1"></script>
 </head>
 <body>
   <!-- Iconen (fase 2f, B29): Tabler Icons v3.51.0, outline — https://tabler.io/icons
