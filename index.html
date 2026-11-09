@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2f5d50">
+  <title>Boekenlijst</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="config.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Boekenlijst</h1>
+    <div class="topbar-right">
+      <span id="user-email" class="user-email"></span>
+      <button id="btn-logout" class="link" type="button" hidden>Uitloggen</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Laden -->
+    <section id="view-loading">
+      <p class="empty">Laden…</p>
+    </section>
+
+    <!-- Inloggen -->
+    <section id="view-login" hidden>
+      <div class="card">
+        <h2>Inloggen</h2>
+        <p>Vul je e-mailadres in. Je krijgt een inloglink per mail; tik daarop en je bent ingelogd. Een wachtwoord is niet nodig.</p>
+        <form id="login-form">
+          <label for="login-email">E-mailadres</label>
+          <input type="email" id="login-email" required autocomplete="email" inputmode="email" placeholder="naam@voorbeeld.nl">
+          <button type="submit" class="primary" id="login-btn">Stuur inloglink</button>
+        </form>
+        <p id="login-msg" class="msg" role="status"></p>
+      </div>
+    </section>
+
+    <!-- App -->
+    <section id="view-app" hidden>
+      <div class="tab" data-tab="bezig">
+        <h2>Bezig</h2>
+        <ul class="booklist" id="list-bezig"></ul>
+      </div>
+
+      <div class="tab" data-tab="wil_lezen" hidden>
+        <h2>Wil lezen</h2>
+        <ul class="booklist" id="list-wil"></ul>
+      </div>
+
+      <div class="tab" data-tab="gelezen" hidden>
+        <h2>Gelezen per jaar</h2>
+        <div id="gelezen"></div>
+      </div>
+
+      <div class="tab" data-tab="zoeken" hidden>
+        <h2>Boek zoeken</h2>
+        <form id="search-form" class="search-form">
+          <input type="search" id="search-q" placeholder="Titel, auteur of ISBN" autocomplete="off" enterkeyhint="search">
+          <button type="submit" class="primary">Zoek</button>
+        </form>
+        <p id="search-status" class="msg" role="status"></p>
+        <ul class="booklist" id="results"></ul>
+        <div id="search-extra" class="search-extra"></div>
+      </div>
+    </section>
+  </main>
+
+  <nav id="tabbar" class="tabbar" hidden>
+    <button type="button" data-tab="bezig"><span class="ico">📖</span>Bezig <span class="count" data-count="bezig"></span></button>
+    <button type="button" data-tab="wil_lezen"><span class="ico">🔖</span>Wil lezen <span class="count" data-count="wil_lezen"></span></button>
+    <button type="button" data-tab="gelezen"><span class="ico">✅</span>Gelezen <span class="count" data-count="gelezen"></span></button>
+    <button type="button" data-tab="zoeken"><span class="ico">🔍</span>Zoeken</button>
+  </nav>
+
+  <!-- Boek toevoegen / bewerken -->
+  <dialog id="dlg">
+    <form id="book-form" novalidate>
+      <div class="dlg-head">
+        <div id="dlg-cover"></div>
+        <div>
+          <h2 id="dlg-heading">Boek</h2>
+          <p id="dlg-meta" class="meta"></p>
+        </div>
+      </div>
+
+      <label for="f-title">Titel</label>
+      <input id="f-title" type="text" required>
+
+      <label for="f-authors">Auteur(s) <small>(scheiden met komma)</small></label>
+      <input id="f-authors" type="text">
+
+      <label for="f-pages">Aantal pagina's</label>
+      <input id="f-pages" type="number" min="1" inputmode="numeric">
+
+      <label for="f-status">Status</label>
+      <select id="f-status">
+        <option value="wil_lezen">Wil lezen</option>
+        <option value="bezig">Bezig</option>
+        <option value="gelezen">Gelezen</option>
+        <option value="gestopt">Gestopt</option>
+      </select>
+
+      <div id="f-dates" class="row">
+        <div>
+          <label for="f-start">Begonnen op</label>
+          <input id="f-start" type="date">
+        </div>
+        <div>
+          <label for="f-finish">Uitgelezen op</label>
+          <input id="f-finish" type="date">
+        </div>
+      </div>
+
+      <label for="f-rating">Waardering</label>
+      <select id="f-rating">
+        <option value="">–</option>
+        <option value="1">★☆☆☆☆</option>
+        <option value="2">★★☆☆☆</option>
+        <option value="3">★★★☆☆</option>
+        <option value="4">★★★★☆</option>
+        <option value="5">★★★★★</option>
+      </select>
+
+      <label for="f-notes">Notities</label>
+      <textarea id="f-notes" rows="3"></textarea>
+
+      <div class="dlg-actions">
+        <button type="button" id="dlg-delete" class="danger">Verwijderen</button>
+        <span class="spacer"></span>
+        <button type="button" id="dlg-cancel">Annuleren</button>
+        <button type="submit" id="dlg-save" class="primary">Opslaan</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status"></div>
+</body>
+</html>
