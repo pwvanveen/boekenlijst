@@ -10,6 +10,9 @@
   --star: #d39b1c;
   --radius: 12px;
   --tabbar-h: 64px;
+  /* Tabler-iconen voor CSS-pseudo-elementen (B29); kleur via background */
+  --mask-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6l6 6l-6 6'/%3E%3C/svg%3E");
+  --mask-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5l10 -10'/%3E%3C/svg%3E");
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -178,8 +181,13 @@ button:disabled { opacity: .6; cursor: default; }
   border-bottom: 1px solid var(--line); margin-bottom: 8px;
 }
 .year summary::-webkit-details-marker { display: none; }
-.year summary::before { content: "▸"; color: var(--muted); margin-right: 6px; }
-.year[open] summary::before { content: "▾"; }
+.year summary::before {
+  /* Tabler chevron-right (B29), als masker zodat de kleur uit de CSS komt */
+  content: ""; flex: none; align-self: center; width: 16px; height: 16px; margin-right: 2px;
+  background: var(--muted); transition: transform .15s;
+  -webkit-mask: var(--mask-chevron) center / contain no-repeat; mask: var(--mask-chevron) center / contain no-repeat;
+}
+.year[open] summary::before { transform: rotate(90deg); }
 .year-label { font-weight: 700; font-size: 1.1rem; flex: 1; }
 .year-stats { color: var(--muted); font-size: .85rem; }
 
@@ -195,7 +203,7 @@ button:disabled { opacity: .6; cursor: default; }
   height: var(--tabbar-h); padding: 6px 2px; font-size: .75rem; min-width: 0;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
 }
-.tabbar button .ico { position: relative; font-size: 1.25rem; line-height: 1.1; }
+.tabbar button .ico { position: relative; display: flex; line-height: 1; }
 .tabbar button .lbl { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tabbar button.active { color: var(--accent); font-weight: 700; }
 .tabbar .count {
@@ -329,7 +337,12 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .share-source .n { color: var(--muted); }
 .share-source.disabled { opacity: .55; cursor: default; }
 .share-years { margin-top: 4px; }
-.share-years .chips button[aria-checked="true"]::before { content: "✓ "; }
+.share-years .chips button[aria-checked="true"]::before {
+  /* Tabler check (B29) */
+  content: ""; display: inline-block; width: 14px; height: 14px; margin: 0 4px -2px 0;
+  background: currentColor;
+  -webkit-mask: var(--mask-check) center / contain no-repeat; mask: var(--mask-check) center / contain no-repeat;
+}
 .share-go { margin-top: 16px; display: grid; gap: 8px; }
 .share-go .msg { text-align: center; margin: 0; }
 .share-go button { width: 100%; }
@@ -388,6 +401,31 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .share-out-actions button { width: 100%; padding: 12px 14px; }
 .share-out-actions button.link { width: auto; justify-self: center; color: var(--accent); padding: 8px 12px; }
 .share-out-hint { text-align: center; }
+
+/* Iconen (fase 2f, B29): Tabler Icons, outline, inline SVG-sprite in index.html.
+   Lijnkleur = currentColor: inactief --muted, actief/accent --accent; volgt donkere modus. */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.i {
+  flex: none; display: inline-block; vertical-align: middle;
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+/* Knoppen met icoon + tekst */
+.photo-btn, .segmented button, .scan-actions button, .share-send, .share-out-actions button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.photo-btn { gap: 6px; }
+.segmented button { gap: 5px; min-width: 0; }
+.segmented button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Smal scherm: icoon boven de tekst, zodat "Leeslijst" volledig past */
+@media (max-width: 359px) {
+  .segmented button { flex-direction: column; gap: 2px; padding: 8px 2px; }
+}
+.scan-btn .i, .sort-btn .i { display: block; }
+.sort-btn { display: grid; place-items: center; }
+.sort-dot { top: 6px; right: 5px; }
+.share-remove { display: grid; place-items: center; }
+.share-out-actions button.link { display: inline-flex; gap: 6px; text-decoration: none; }
+.share-out-actions button.link span { text-decoration: underline; }
 
 /* Afdrukweergave (fase 2e, B25): alleen de deellijst, zwart op wit, A4 */
 .print-root { display: none; }

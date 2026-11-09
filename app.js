@@ -4,13 +4,17 @@
    Boekenlijst – fase 1 (MVP) + 2a (barcode scannen) + 2b (covers)
    + 2c (sorteren en filteren) + 2d (tabblad Delen)
    + 2e (delen als tekst, kopiëren, PDF / afdrukken)
+   + 2f (naamgeving en iconen, B28/B29)
    Inloggen (magic link), zoeken (Google Books → Open Library),
-   toevoegen, status/datums, lijsten Bezig / Wil lezen / Gelezen per jaar,
+   toevoegen, status/datums, lijsten Bezig / Leeslijst / Gelezen per jaar,
    ISBN-barcode scannen met de camera (BarcodeDetector, met polyfill),
    covers trapsgewijs (Google → Open Library op ISBN → eigen foto, B18),
-   sorteren en filteren per lijst via ⇅ en een onderpaneel (B19, B20),
+   sorteren en filteren per lijst via een icoon en een onderpaneel (B19, B20),
    tijdelijke deellijst samenstellen en opschonen (B22, B23),
    deellijst delen via het deelmenu, klembord of afdrukweergave (B24–B26).
+   Naamgeving (B28): status 'wil_lezen' heet in de interface "Leeslijst", het
+   tabblad 'zoeken' heet "Toevoegen". Interne waarden en opslagsleutels blijven.
+   Iconen (B29): Tabler Icons (outline, MIT) als inline SVG-sprite in index.html.
    ========================================================= */
 
 // Voor het vangnet in index.html: app.js is gestart
@@ -40,7 +44,7 @@ const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY
   }
 });
 
-const STATUS = { wil_lezen: 'Wil lezen', bezig: 'Bezig', gelezen: 'Gelezen', gestopt: 'Gestopt' };
+const STATUS = { wil_lezen: 'Leeslijst', bezig: 'Bezig', gelezen: 'Gelezen', gestopt: 'Gestopt' };
 const SOURCE = { google: 'Google Books', openlibrary: 'Open Library', handmatig: 'handmatig' };
 
 const state = {
@@ -85,6 +89,12 @@ function daysBetween(a, b) {
 
 function stars(n) {
   return n ? '★'.repeat(n) + '☆'.repeat(5 - n) : '';
+}
+
+// Lijnicoon uit de sprite in index.html (B29). Altijd decoratief: de knop
+// zelf heeft tekst of een aria-label.
+function icon(name, size = 20) {
+  return `<svg class="i" width="${size}" height="${size}" aria-hidden="true" focusable="false"><use href="#i-${name}"/></svg>`;
 }
 
 function authorsText(a) {
@@ -334,9 +344,9 @@ function noMatchHtml(list, tag = 'li') {
 
 function render() {
   renderSimpleList('bezig', metaBezig,
-    'Je bent nu niets aan het lezen. Zoek een boek via “Zoeken”, of zet een boek uit “Wil lezen” op Bezig.');
+    'Je bent nu niets aan het lezen. Voeg een boek toe via “Toevoegen”, of zet een boek uit je “Leeslijst” op Bezig.');
   renderSimpleList('wil_lezen', metaWil,
-    'Je verlanglijst is leeg. Voeg boeken toe via “Zoeken”.');
+    'Je leeslijst is leeg. Voeg boeken toe via “Toevoegen”.');
   renderGelezen();
   renderShare();
 
@@ -443,7 +453,7 @@ function renderGelezen() {
 // Per tabblad: welke statussen erin staan en welk datumveld "datum" betekent
 const LISTS = {
   bezig:     { title: 'Bezig',            statuses: ['bezig'],              dateField: 'date_started',  dateLabel: 'Startdatum' },
-  wil_lezen: { title: 'Wil lezen',        statuses: ['wil_lezen'],          dateField: 'created_at',    dateLabel: 'Datum toegevoegd' },
+  wil_lezen: { title: 'Leeslijst',        statuses: ['wil_lezen'],          dateField: 'created_at',    dateLabel: 'Datum toegevoegd' },
   gelezen:   { title: 'Gelezen per jaar', statuses: ['gelezen', 'gestopt'], dateField: 'date_finished', dateLabel: 'Einddatum' }
 };
 
@@ -652,7 +662,7 @@ function filterOptions(list, books) {
   };
 }
 
-// ⇅-icoon, stipje en regel "x van y boeken · Wissen" bij een lijst
+// Sorteericoon, stipje en regel "x van y boeken · Wissen" bij een lijst
 function updateListChrome(list, total, shown) {
   const active = filtersActive(list);
   const btn = document.querySelector(`.sort-btn[data-sheet="${list}"]`);
@@ -1028,7 +1038,7 @@ function shareCandidates(draft) {
   });
 }
 
-// Volgorde: Bezig → Wil lezen → Gelezen (nieuwste jaar eerst, zonder einddatum
+// Volgorde: Bezig → Leeslijst → Gelezen (nieuwste jaar eerst, zonder einddatum
 // achteraan) → Gestopt; binnen elke groep de standaardsortering van die lijst
 function shareOrdered(books) {
   const by = (st) => books.filter((b) => b.status === st);
@@ -1048,7 +1058,7 @@ function shareOrdered(books) {
 function shareLabel(b) {
   switch (b.status) {
     case 'bezig': return 'Bezig';
-    case 'wil_lezen': return 'Wil lezen';
+    case 'wil_lezen': return 'Leeslijst';
     case 'gelezen': return b.date_finished ? `Gelezen ${shareYear(b)}` : 'Gelezen – zonder einddatum';
     default: return STATUS[b.status] || b.status;
   }
@@ -1138,7 +1148,7 @@ function renderShareChoose(el) {
     <p class="share-intro">${adding
       ? 'Kies wat je wilt toevoegen. Boeken die al in je deellijst staan, komen er niet dubbel in.'
       : 'Kies uit welke lijsten je boeken wilt delen; daarna kun je de selectie opschonen. Je eigen lijsten veranderen niet.'}</p>
-    ${noBooks ? '<p class="empty">Je hebt nog geen boeken om te delen. Voeg boeken toe via “Zoeken”.</p>' : `
+    ${noBooks ? '<p class="empty">Je hebt nog geen boeken om te delen. Voeg boeken toe via “Toevoegen”.</p>' : `
     <fieldset class="share-sources"><legend class="sr-only">Lijsten</legend>${sourceRows}</fieldset>
     ${yearsHtml}
     <div class="share-go">
@@ -1156,7 +1166,7 @@ function renderShareList(el) {
 
   el.innerHTML = `<h2>Deellijst · ${n} ${n === 1 ? 'boek' : 'boeken'}</h2>
     <p class="share-sub">Samengesteld op ${esc(made)} · alleen op dit toestel</p>
-    ${n ? `<button type="button" class="primary share-send" data-share-action="send" data-focus="send">📤 Delen…</button>` : ''}
+    ${n ? `<button type="button" class="primary share-send" data-share-action="send" data-focus="send">${icon('share')}<span>Delen…</span></button>` : ''}
     ${n ? `<ul class="booklist share-list">${books.map((b) => `<li class="book share-item" data-share-id="${esc(b.id)}">
         ${coverHtml(b)}
         <div class="info">
@@ -1167,7 +1177,7 @@ function renderShareList(el) {
                role="button" tabindex="0" aria-expanded="${share.openNotes.has(b.id)}">${esc(b.notes)}</p>` : ''}
         </div>
         <button type="button" class="share-remove" data-share-remove="${esc(b.id)}" data-focus="rm-${esc(b.id)}"
-                aria-label="“${esc(b.title)}” uit de deellijst halen" title="Uit de deellijst halen">✕</button>
+                aria-label="“${esc(b.title)}” uit de deellijst halen" title="Uit de deellijst halen">${icon('x')}</button>
       </li>`).join('')}</ul>`
     : '<p class="empty">Je deellijst is leeg.</p>'}
     <div class="share-actions">
@@ -1330,7 +1340,7 @@ function noteLines(notes) {
 // Platte tekst voor het deelmenu en het klembord (B26)
 function shareText({ notes = shareOut.notes } = {}) {
   const { groups, count } = shareContent();
-  const out = [`📚 Boekenlijst – ${fmtLongDate(new Date())} (${boeken(count)})`];
+  const out = [`Boekenlijst – ${fmtLongDate(new Date())} (${boeken(count)})`];
   for (const g of groups) {
     out.push('', g.label);
     for (const b of g.books) {
@@ -1372,9 +1382,9 @@ function renderShareSheet() {
       ${sw('covers', 'Covers tonen', 'Alleen bij PDF / afdrukken')}
     </div>
     <div class="share-out-actions">
-      <button type="button" class="primary" data-share-out="app">📤 Delen via app</button>
-      <button type="button" data-share-out="print">🖨️ PDF / afdrukken</button>
-      <button type="button" class="link" data-share-out="copy">Kopiëren</button>
+      <button type="button" class="primary" data-share-out="app">${icon('share')}<span>Delen via app</span></button>
+      <button type="button" data-share-out="print">${icon('printer')}<span>PDF / afdrukken</span></button>
+      <button type="button" class="link" data-share-out="copy">${icon('copy', 18)}<span>Kopiëren</span></button>
     </div>
     ${canShare ? '' : '<p class="meta share-out-hint">Deze browser heeft geen deelmenu; “Delen via app” kopieert de lijst naar het klembord.</p>'}`;
   updateShareSheet();
@@ -1833,7 +1843,7 @@ function renderDialogCover() {
   const d = state.coverDraft;
   const shown = d?.preview || d?.url || b.cover_url || null;
   $('#dlg-cover').innerHTML = coverHtml({ ...b, cover_url: shown });
-  $('#btn-photo').textContent = shown ? '📷 Cover vervangen' : '📷 Foto van cover maken';
+  $('#btn-photo').innerHTML = icon('camera', 18) + `<span>${shown ? 'Cover vervangen' : 'Foto van cover maken'}</span>`;
   $('#photo-msg').textContent = d?.blob
     ? 'Nieuwe foto – wordt bewaard bij Opslaan.'
     : d?.url ? 'Cover gevonden via Open Library – wordt bewaard bij Opslaan.' : '';
@@ -2132,7 +2142,7 @@ async function openScanner() {
   scan.active = true;
   scan.torchOn = false;
   $('#scan-torch').hidden = true;
-  $('#scan-torch').setAttribute('aria-pressed', 'false');
+  setTorchButton(false);
   $('#scan-cancel').textContent = 'Annuleren';
   $('#scanner').classList.remove('has-error');
   setScanHint('Camera starten…');
@@ -2292,13 +2302,20 @@ async function onBarcode(isbn) {
 $('#btn-scan').addEventListener('click', openScanner);
 $('#scan-cancel').addEventListener('click', () => closeScanner());
 
+// Zaklampknop: icoon toont de stand (uit = bulb-off, aan = bulb), plus aria-pressed
+function setTorchButton(on) {
+  const btn = $('#scan-torch');
+  btn.setAttribute('aria-pressed', String(on));
+  btn.innerHTML = icon(on ? 'bulb' : 'bulb-off') + '<span>Zaklamp</span>';
+}
+
 $('#scan-torch').addEventListener('click', async () => {
   if (!scan.track) return;
   const on = !scan.torchOn;
   try {
     await scan.track.applyConstraints({ advanced: [{ torch: on }] });
     scan.torchOn = on;
-    $('#scan-torch').setAttribute('aria-pressed', String(on));
+    setTorchButton(on);
   } catch (err) {
     console.warn('Zaklamp schakelen mislukt:', err);
     toast('Zaklamp werkt niet op deze camera');

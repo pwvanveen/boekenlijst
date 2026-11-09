@@ -49,6 +49,26 @@
   <script defer src="app.js"></script>
 </head>
 <body>
+  <!-- Iconen (fase 2f, B29): Tabler Icons v3.51.0, outline — https://tabler.io/icons
+       MIT License, Copyright (c) 2020-2024 Paweł Kuna.
+       Eén verborgen sprite; gebruik: <svg class="i"><use href="#i-naam"/></svg>.
+       Lijnkleur volgt currentColor (zie .i in style.css). -->
+  <svg xmlns="http://www.w3.org/2000/svg" class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-book-2" viewBox="0 0 24 24"><path d="M19 4v16h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2h12"/><path d="M19 16h-12a2 2 0 0 0 -2 2"/><path d="M9 8h6"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M18 7v14l-6 -4l-6 4v-14a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4"/></symbol>
+    <symbol id="i-circle-check" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12l2 2l4 -4"/></symbol>
+    <symbol id="i-circle-plus" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 18 0a9 9 0 0 0 -18 0"/><path d="M9 12h6"/><path d="M12 9v6"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/><path d="M15 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/><path d="M15 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0"/><path d="M8.7 10.7l6.6 -3.4"/><path d="M8.7 13.3l6.6 3.4"/></symbol>
+    <symbol id="i-barcode" viewBox="0 0 24 24"><path d="M4 7v-1a2 2 0 0 1 2 -2h2"/><path d="M4 17v1a2 2 0 0 0 2 2h2"/><path d="M16 4h2a2 2 0 0 1 2 2v1"/><path d="M16 20h2a2 2 0 0 0 2 -2v-1"/><path d="M5 11h1v2h-1l0 -2"/><path d="M10 11l0 2"/><path d="M14 11h1v2h-1l0 -2"/><path d="M19 11l0 2"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M3 12h1m8 -9v1m8 8h1m-15.4 -6.4l.7 .7m12.1 -.7l-.7 .7"/><path d="M9 16a5 5 0 1 1 6 0a3.5 3.5 0 0 0 -1 3a2 2 0 0 1 -4 0a3.5 3.5 0 0 0 -1 -3"/><path d="M9.7 17l4.6 0"/></symbol>
+    <symbol id="i-bulb-off" viewBox="0 0 24 24"><path d="M3 12h1m8 -9v1m8 8h1m-15.4 -6.4l.7 .7m12.1 -.7l-.7 .7"/><path d="M11.089 7.083a5 5 0 0 1 5.826 5.84m-1.378 2.611a5.012 5.012 0 0 1 -.537 .466a3.5 3.5 0 0 0 -1 3a2 2 0 1 1 -4 0a3.5 3.5 0 0 0 -1 -3a5 5 0 0 1 -.528 -7.544"/><path d="M9.7 17h4.6"/><path d="M3 3l18 18"/></symbol>
+    <symbol id="i-adjustments-horizontal" viewBox="0 0 24 24"><path d="M12 6a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 6l8 0"/><path d="M16 6l4 0"/><path d="M6 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 12l2 0"/><path d="M10 12l10 0"/><path d="M15 18a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"/><path d="M4 18l11 0"/><path d="M19 18l1 0"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M5 7h1a2 2 0 0 0 2 -2a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v9a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-9a2 2 0 0 1 2 -2"/><path d="M9 13a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></symbol>
+    <symbol id="i-printer" viewBox="0 0 24 24"><path d="M17 17h2a2 2 0 0 0 2 -2v-4a2 2 0 0 0 -2 -2h-14a2 2 0 0 0 -2 2v4a2 2 0 0 0 2 2h2"/><path d="M17 9v-4a2 2 0 0 0 -2 -2h-6a2 2 0 0 0 -2 2v4"/><path d="M7 15a2 2 0 0 1 2 -2h6a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-6a2 2 0 0 1 -2 -2l0 -4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666"/><path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></symbol>
+  </svg>
+
   <!-- Foutmelding-vangnet (opmaak inline: werkt ook als style.css niet laadt) -->
   <div id="fatal" role="alert" hidden
        style="position:sticky;top:0;z-index:50;background:#b3261e;color:#fff;padding:12px 16px;font:15px/1.4 system-ui,sans-serif">
@@ -92,7 +112,7 @@
       <div class="tab" data-tab="bezig">
         <div class="list-head">
           <h2>Bezig</h2>
-          <button type="button" class="sort-btn" data-sheet="bezig" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden>⇅<span class="sort-dot" hidden></span></button>
+          <button type="button" class="sort-btn" data-sheet="bezig" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden><svg class="i" width="22" height="22" aria-hidden="true" focusable="false"><use href="#i-adjustments-horizontal"/></svg><span class="sort-dot" hidden></span></button>
         </div>
         <p class="filter-bar" data-filterbar="bezig" hidden></p>
         <ul class="booklist" id="list-bezig"></ul>
@@ -100,8 +120,8 @@
 
       <div class="tab" data-tab="wil_lezen" hidden>
         <div class="list-head">
-          <h2>Wil lezen</h2>
-          <button type="button" class="sort-btn" data-sheet="wil_lezen" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden>⇅<span class="sort-dot" hidden></span></button>
+          <h2>Leeslijst</h2>
+          <button type="button" class="sort-btn" data-sheet="wil_lezen" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden><svg class="i" width="22" height="22" aria-hidden="true" focusable="false"><use href="#i-adjustments-horizontal"/></svg><span class="sort-dot" hidden></span></button>
         </div>
         <p class="filter-bar" data-filterbar="wil_lezen" hidden></p>
         <ul class="booklist" id="list-wil"></ul>
@@ -110,21 +130,18 @@
       <div class="tab" data-tab="gelezen" hidden>
         <div class="list-head">
           <h2>Gelezen per jaar</h2>
-          <button type="button" class="sort-btn" data-sheet="gelezen" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden>⇅<span class="sort-dot" hidden></span></button>
+          <button type="button" class="sort-btn" data-sheet="gelezen" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden><svg class="i" width="22" height="22" aria-hidden="true" focusable="false"><use href="#i-adjustments-horizontal"/></svg><span class="sort-dot" hidden></span></button>
         </div>
         <p class="filter-bar" data-filterbar="gelezen" hidden></p>
         <div id="gelezen"></div>
       </div>
 
       <div class="tab" data-tab="zoeken" hidden>
-        <h2>Boek zoeken</h2>
+        <h2>Boek toevoegen</h2>
         <form id="search-form" class="search-form">
           <input type="search" id="search-q" placeholder="Titel, auteur of ISBN" autocomplete="off" enterkeyhint="search">
           <button type="button" id="btn-scan" class="scan-btn" aria-label="Barcode scannen" title="Barcode scannen">
-            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-              <path d="M3 7V4h3M18 4h3v3M21 17v3h-3M6 20H3v-3"/>
-              <path d="M7 8v8M10 8v8M13 8v8M16 8v8"/>
-            </svg>
+            <svg class="i" width="22" height="22" aria-hidden="true" focusable="false"><use href="#i-barcode"/></svg>
           </button>
           <button type="submit" class="primary">Zoek</button>
         </form>
@@ -141,13 +158,14 @@
   </main>
 
   <!-- Tabbalk: vijf tabbladen. Teller als badge op het icoon, zodat de labels
-       ook op 360 px breed op één regel passen (fase 2d). -->
+       ook op 320 px breed op één regel passen (fase 2d). Namen en iconen: fase 2f
+       (B28/B29); interne waarden (data-tab="wil_lezen"/"zoeken") ongewijzigd. -->
   <nav id="tabbar" class="tabbar" hidden>
-    <button type="button" data-tab="bezig"><span class="ico">📖<span class="count" data-count="bezig"></span></span><span class="lbl">Bezig</span></button>
-    <button type="button" data-tab="wil_lezen"><span class="ico">🔖<span class="count" data-count="wil_lezen"></span></span><span class="lbl">Wil lezen</span></button>
-    <button type="button" data-tab="gelezen"><span class="ico">✅<span class="count" data-count="gelezen"></span></span><span class="lbl">Gelezen</span></button>
-    <button type="button" data-tab="zoeken"><span class="ico">🔍</span><span class="lbl">Zoeken</span></button>
-    <button type="button" data-tab="delen"><span class="ico">📤</span><span class="lbl">Delen</span></button>
+    <button type="button" data-tab="bezig"><span class="ico"><svg class="i" width="24" height="24" aria-hidden="true" focusable="false"><use href="#i-book-2"/></svg><span class="count" data-count="bezig"></span></span><span class="lbl">Bezig</span></button>
+    <button type="button" data-tab="wil_lezen"><span class="ico"><svg class="i" width="24" height="24" aria-hidden="true" focusable="false"><use href="#i-bookmark"/></svg><span class="count" data-count="wil_lezen"></span></span><span class="lbl">Leeslijst</span></button>
+    <button type="button" data-tab="gelezen"><span class="ico"><svg class="i" width="24" height="24" aria-hidden="true" focusable="false"><use href="#i-circle-check"/></svg><span class="count" data-count="gelezen"></span></span><span class="lbl">Gelezen</span></button>
+    <button type="button" data-tab="zoeken"><span class="ico"><svg class="i" width="24" height="24" aria-hidden="true" focusable="false"><use href="#i-circle-plus"/></svg></span><span class="lbl">Toevoegen</span></button>
+    <button type="button" data-tab="delen"><span class="ico"><svg class="i" width="24" height="24" aria-hidden="true" focusable="false"><use href="#i-share"/></svg></span><span class="lbl">Delen</span></button>
   </nav>
 
   <!-- Boek toevoegen / bewerken -->
@@ -158,7 +176,7 @@
         <div>
           <h2 id="dlg-heading">Boek</h2>
           <p id="dlg-meta" class="meta"></p>
-          <button type="button" id="btn-photo" class="photo-btn">📷 Foto van cover maken</button>
+          <button type="button" id="btn-photo" class="photo-btn"><svg class="i" width="18" height="18" aria-hidden="true" focusable="false"><use href="#i-camera"/></svg><span>Foto van cover maken</span></button>
           <input type="file" id="f-photo" accept="image/*" capture="environment" hidden>
           <p id="photo-msg" class="meta" role="status"></p>
         </div>
@@ -177,16 +195,16 @@
       <div id="f-status-quick-wrap" hidden>
         <label id="f-status-quick-label">Toevoegen aan</label>
         <div id="f-status-quick" class="segmented" role="radiogroup" aria-labelledby="f-status-quick-label">
-          <button type="button" role="radio" data-status="wil_lezen">🔖 Wil lezen</button>
-          <button type="button" role="radio" data-status="bezig">📖 Bezig</button>
-          <button type="button" role="radio" data-status="gelezen">✅ Gelezen</button>
+          <button type="button" role="radio" data-status="wil_lezen"><svg class="i" width="18" height="18" aria-hidden="true" focusable="false"><use href="#i-bookmark"/></svg><span>Leeslijst</span></button>
+          <button type="button" role="radio" data-status="bezig"><svg class="i" width="18" height="18" aria-hidden="true" focusable="false"><use href="#i-book-2"/></svg><span>Bezig</span></button>
+          <button type="button" role="radio" data-status="gelezen"><svg class="i" width="18" height="18" aria-hidden="true" focusable="false"><use href="#i-circle-check"/></svg><span>Gelezen</span></button>
         </div>
       </div>
 
       <div id="f-status-wrap">
         <label for="f-status">Status</label>
         <select id="f-status">
-          <option value="wil_lezen">Wil lezen</option>
+          <option value="wil_lezen">Leeslijst</option>
           <option value="bezig">Bezig</option>
           <option value="gelezen">Gelezen</option>
           <option value="gestopt">Gestopt</option>
@@ -232,7 +250,7 @@
     <div class="scan-frame" aria-hidden="true"></div>
     <p id="scan-hint" class="scan-hint" role="status">Camera starten…</p>
     <div class="scan-actions">
-      <button type="button" id="scan-torch" hidden aria-pressed="false">🔦 Zaklamp</button>
+      <button type="button" id="scan-torch" hidden aria-pressed="false"><svg class="i" width="20" height="20" aria-hidden="true" focusable="false"><use href="#i-bulb-off"/></svg><span>Zaklamp</span></button>
       <button type="button" id="scan-cancel">Annuleren</button>
     </div>
   </div>
