@@ -3,12 +3,14 @@
 /* =========================================================
    Boekenlijst – fase 1 (MVP) + 2a (barcode scannen) + 2b (covers)
    + 2c (sorteren en filteren) + 2d (tabblad Delen)
+   + 2e (delen als tekst, kopiëren, PDF / afdrukken)
    Inloggen (magic link), zoeken (Google Books → Open Library),
    toevoegen, status/datums, lijsten Bezig / Wil lezen / Gelezen per jaar,
    ISBN-barcode scannen met de camera (BarcodeDetector, met polyfill),
    covers trapsgewijs (Google → Open Library op ISBN → eigen foto, B18),
    sorteren en filteren per lijst via ⇅ en een onderpaneel (B19, B20),
-   tijdelijke deellijst samenstellen en opschonen (B22, B23).
+   tijdelijke deellijst samenstellen en opschonen (B22, B23),
+   deellijst delen via het deelmenu, klembord of afdrukweergave (B24–B26).
    ========================================================= */
 
 // Voor het vangnet in index.html: app.js is gestart
@@ -687,8 +689,11 @@ document.addEventListener('click', (e) => {
 
 /* ---------- Onderpaneel ---------- */
 
+// Eén onderpaneel voor twee doelen: sorteren/filteren (mode 'filter', fase 2c)
+// en het deelvenster van de deellijst (mode 'share', fase 2e)
 const sheet = {
   open: false,
+  mode: 'filter',
   list: null,
   pushedHistory: false,
   opener: null,
@@ -766,6 +771,7 @@ function renderSheet() {
 // Aantallen in kop en knop bijwerken (zonder het paneel opnieuw op te bouwen)
 function updateSheetSummary() {
   if (!sheet.open) return;
+  if (sheet.mode === 'share') { updateShareSheet(); return; }
   const list = sheet.list;
   const total = baseBooks(list).length;
   const n = applyFilters(list, baseBooks(list)).length;
@@ -779,11 +785,20 @@ function updateSheetSummary() {
 
 function openSheet(list) {
   if (sheet.open) return;
+  sheet.mode = 'filter';
+  sheet.list = list;
+  $('#sheet-title').textContent = 'Sorteren en filteren';
+  $('#sheet-clear').hidden = false;
+  sheet.open = true;
+  renderSheet();
+  showSheetPanel();
+}
+
+// Paneel tonen (gedeeld door beide modi): inhoud staat al klaar
+function showSheetPanel() {
   clearTimeout(sheet.hideTimer);
   sheet.open = true;
-  sheet.list = list;
   sheet.opener = document.activeElement;
-  renderSheet();
   $('#sheet-body').scrollTop = 0;
   updateKeyboardOffset();
   sheetEl.style.transform = '';
@@ -826,12 +841,13 @@ function closeSheet(fromPopstate = false) {
 }
 
 $('#sheet-done').addEventListener('click', () => closeSheet());
-$('#sheet-clear').addEventListener('click', () => clearFilters(sheet.list));
+$('#sheet-clear').addEventListener('click', () => { if (sheet.mode === 'filter') clearFilters(sheet.list); });
 sheetBackdrop.addEventListener('click', () => closeSheet());
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheet.open) closeSheet(); });
 window.addEventListener('popstate', () => { if (sheet.open) closeSheet(true); });
 
 $('#sheet-body').addEventListener('click', (e) => {
+  if (sheet.mode === 'share') { onShareSheetClick(e); return; }
   const btn = e.target.closest('button[data-group]');
   if (!btn || !sheet.open) return;
   const list = sheet.list;
@@ -857,6 +873,7 @@ $('#sheet-body').addEventListener('click', (e) => {
 });
 
 $('#sheet-body').addEventListener('change', (e) => {
+  if (sheet.mode === 'share') { onShareSheetChange(e); return; }
   const key = e.target.dataset?.filter;
   if (key && sheet.open) setFilter(sheet.list, key, e.target.value);
 });
@@ -1139,6 +1156,7 @@ function renderShareList(el) {
 
   el.innerHTML = `<h2>Deellijst · ${n} ${n === 1 ? 'boek' : 'boeken'}</h2>
     <p class="share-sub">Samengesteld op ${esc(made)} · alleen op dit toestel</p>
+    ${n ? `<button type="button" class="primary share-send" data-share-action="send" data-focus="send">📤 Delen…</button>` : ''}
     ${n ? `<ul class="booklist share-list">${books.map((b) => `<li class="book share-item" data-share-id="${esc(b.id)}">
         ${coverHtml(b)}
         <div class="info">
@@ -1267,7 +1285,297 @@ $('#share').addEventListener('click', (e) => {
   else if (act === 'add') { share.adding = true; share.draft = null; renderShare(); window.scrollTo(0, 0); }
   else if (act === 'cancel-add') { share.adding = false; share.draft = null; renderShare(); }
   else if (act === 'reset') shareReset();
+  else if (act === 'send') openShareSheet();
 });
+
+/* ---------- Delen als tekst, kopiëren, PDF / afdrukken (fase 2e, B24–B26) ----------
+   Eén deelvenster (het onderpaneel in mode 'share') met twee schakelaars en
+   drie acties. Tekst en PDF komen uit dezelfde inhoud (shareContent), dus in
+   dezelfde volgorde en met dezelfde labels als de deellijst. Geen library,
+   geen nieuwe afhankelijkheden, geen databasewijziging. */
+
+const PRINT_COVER_WAIT_MS = 5000;
+
+const shareOut = {
+  notes: true,   // Notities tonen (tekst én PDF) – niet bewaard, elke keer aan
+  covers: true,  // Covers tonen (alleen PDF)
+  busy: false    // PDF wordt voorbereid / deelmenu is open
+};
+
+function fmtLongDate(d) {
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+// Deellijst als groepen: [{ label, books }], in de volgorde van shareBooks()
+function shareContent() {
+  const groups = [];
+  for (const b of shareBooks()) {
+    const label = shareLabel(b);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.books.push(b);
+    else groups.push({ label, books: [b] });
+  }
+  const count = groups.reduce((n, g) => n + g.books.length, 0);
+  return { groups, count };
+}
+
+const boeken = (n) => `${n} ${n === 1 ? 'boek' : 'boeken'}`;
+
+// Notitie opschonen: regelafbrekingen behouden, lege regels en spaties aan de randen weg
+function noteLines(notes) {
+  return String(notes || '').replace(/\r\n?/g, '\n').split('\n')
+    .map((l) => l.trim()).filter(Boolean);
+}
+
+// Platte tekst voor het deelmenu en het klembord (B26)
+function shareText({ notes = shareOut.notes } = {}) {
+  const { groups, count } = shareContent();
+  const out = [`📚 Boekenlijst – ${fmtLongDate(new Date())} (${boeken(count)})`];
+  for (const g of groups) {
+    out.push('', g.label);
+    for (const b of g.books) {
+      const authors = authorsText(b.authors);
+      const extra = [];
+      if (b.pages) extra.push(`${b.pages} blz.`);
+      if (b.rating) extra.push(stars(b.rating));
+      out.push(`• ${(b.title || '').trim() || 'Zonder titel'}${authors ? ` – ${authors}` : ''}${extra.length ? ` (${extra.join(', ')})` : ''}`);
+      if (notes) for (const l of noteLines(b.notes)) out.push(`  ${l}`);
+    }
+  }
+  return out.join('\n');
+}
+
+/* --- Deelvenster --- */
+
+function openShareSheet() {
+  if (sheet.open || !shareBooks().length) return;
+  shareOut.notes = true;
+  shareOut.covers = true;
+  sheet.mode = 'share';
+  sheet.list = null;
+  $('#sheet-title').textContent = 'Deellijst delen';
+  $('#sheet-clear').hidden = true;
+  sheet.open = true;
+  renderShareSheet();
+  showSheetPanel();
+}
+
+function renderShareSheet() {
+  const sw = (key, label, hint) => `<label class="switch-row">
+      <span class="switch-text"><span>${esc(label)}</span>${hint ? `<small>${esc(hint)}</small>` : ''}</span>
+      <input type="checkbox" role="switch" class="switch" data-share-opt="${key}" ${shareOut[key] ? 'checked' : ''}>
+    </label>`;
+  const canShare = typeof navigator.share === 'function';
+  $('#sheet-body').innerHTML = `
+    <div class="switches">
+      ${sw('notes', 'Notities tonen', 'Je notities zijn persoonlijk; zet ze uit als je met anderen deelt.')}
+      ${sw('covers', 'Covers tonen', 'Alleen bij PDF / afdrukken')}
+    </div>
+    <div class="share-out-actions">
+      <button type="button" class="primary" data-share-out="app">📤 Delen via app</button>
+      <button type="button" data-share-out="print">🖨️ PDF / afdrukken</button>
+      <button type="button" class="link" data-share-out="copy">Kopiëren</button>
+    </div>
+    ${canShare ? '' : '<p class="meta share-out-hint">Deze browser heeft geen deelmenu; “Delen via app” kopieert de lijst naar het klembord.</p>'}`;
+  updateShareSheet();
+}
+
+function updateShareSheet() {
+  const n = shareBooks().length;
+  if (!n) { closeSheet(); return; } // deellijst intussen leeg (bijv. andere gebruiker)
+  $('#sheet-sub').textContent = boeken(n);
+  $('#sheet-done').textContent = 'Sluiten';
+  $('#sheet-body').querySelectorAll('[data-share-out]').forEach((b) => { b.disabled = shareOut.busy; });
+}
+
+function onShareSheetChange(e) {
+  const key = e.target.dataset?.shareOpt;
+  if (key) shareOut[key] = e.target.checked;
+}
+
+function onShareSheetClick(e) {
+  const act = e.target.closest('[data-share-out]')?.dataset.shareOut;
+  if (!act || shareOut.busy) return;
+  if (act === 'app') shareViaApp();
+  else if (act === 'copy') shareCopy();
+  else if (act === 'print') sharePrint();
+}
+
+/* --- Delen via app (Web Share API) en kopiëren --- */
+
+// Moet direct vanuit de tik worden aangeroepen (vereiste van de browser)
+function shareViaApp() {
+  const text = shareText();
+  if (typeof navigator.share !== 'function') {
+    copyText(text, 'Lijst gekopieerd – plak hem in een app naar keuze');
+    return;
+  }
+  let p;
+  try {
+    p = navigator.share({ title: 'Boekenlijst', text });
+  } catch (err) {
+    copyText(text, 'Lijst gekopieerd – plak hem in een app naar keuze');
+    return;
+  }
+  shareOut.busy = true;
+  updateShareSheet();
+  Promise.resolve(p).then(() => {
+    shareOut.busy = false;
+    closeSheet();
+  }, (err) => {
+    shareOut.busy = false;
+    if (sheet.open && sheet.mode === 'share') updateShareSheet();
+    if (err && err.name === 'AbortError') return; // zelf geannuleerd: stil
+    copyText(text, 'Lijst gekopieerd – plak hem in een app naar keuze');
+  });
+}
+
+function shareCopy() {
+  copyText(shareText(), 'Lijst gekopieerd – plak hem in een app naar keuze');
+}
+
+// Klembord: eerst de moderne API, anders de oude manier via een tekstvak
+async function copyText(text, okMsg) {
+  let ok = false;
+  try {
+    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); ok = true; }
+  } catch (_) { /* valt terug op execCommand */ }
+  if (!ok) ok = legacyCopy(text);
+  if (ok) {
+    if (sheet.open && sheet.mode === 'share') closeSheet();
+    toast(okMsg, { duration: 3500 });
+  } else {
+    toast('Kopiëren is niet gelukt. Probeer “PDF / afdrukken”.', { duration: 4500 });
+  }
+}
+
+function legacyCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+  document.body.append(ta);
+  const prevFocus = document.activeElement;
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  ta.remove();
+  try { prevFocus?.focus?.({ preventScroll: true }); } catch (_) {}
+  return ok;
+}
+
+/* --- PDF / afdrukken (afdrukweergave van de browser, B25) --- */
+
+// Afdrukinhoud opbouwen in #print (alleen zichtbaar in @media print)
+function buildPrint({ notes = shareOut.notes, covers = shareOut.covers } = {}) {
+  const { groups, count } = shareContent();
+  const made = share.saved ? fmtLongDate(new Date(share.saved.created_at)) : fmtLongDate(new Date());
+  const book = (b) => {
+    const meta = [];
+    if (b.pages) meta.push(`${b.pages} blz.`);
+    if (b.rating) meta.push(`<span class="p-stars">${stars(b.rating)}</span>`);
+    const lines = notes ? noteLines(b.notes) : [];
+    return `<div class="p-book${covers ? '' : ' no-cover'}">
+      ${covers ? (b.cover_url
+        ? `<img class="p-cover" src="${esc(b.cover_url)}" alt="" referrerpolicy="no-referrer"
+             data-title="${esc(b.title || '')}" data-author="${esc((b.authors || [])[0] || '')}">`
+        : printPlaceholder(b)) : ''}
+      <div class="p-info">
+        <div class="p-title">${esc((b.title || '').trim() || 'Zonder titel')}</div>
+        ${b.authors?.length ? `<div class="p-authors">${esc(authorsText(b.authors))}</div>` : ''}
+        ${meta.length ? `<div class="p-meta">${meta.join(' · ')}</div>` : ''}
+        ${lines.length ? `<div class="p-note">${lines.map(esc).join('<br>')}</div>` : ''}
+      </div>
+    </div>`;
+  };
+  // Groepskop + eerste boek samen, zodat een kop nooit los onderaan een pagina staat
+  const group = (g) => `<section class="p-group">
+      <div class="p-keep"><h2>${esc(g.label)}</h2>${book(g.books[0])}</div>
+      ${g.books.slice(1).map(book).join('')}
+    </section>`;
+  $('#print').innerHTML = `<h1>Boekenlijst</h1>
+    <p class="p-sub">Samengesteld op ${esc(made)} · ${boeken(count)}</p>
+    ${groups.map(group).join('')}`;
+}
+
+function printPlaceholder(b) {
+  const title = (b.title || '').trim() || 'Zonder titel';
+  let h = 0;
+  for (const c of title) h = (h * 31 + c.codePointAt(0)) % 360;
+  const author = (b.authors || [])[0] || '';
+  return `<div class="p-cover p-ph" style="--hue:${h}"><span class="ph-title">${esc(title)}</span>${
+    author ? `<span class="ph-author">${esc(author)}</span>` : ''}</div>`;
+}
+
+// Wachten tot de covers geladen zijn (max. PRINT_COVER_WAIT_MS); niet geladen → placeholder
+function waitForPrintCovers() {
+  const imgs = [...$('#print').querySelectorAll('img.p-cover')];
+  const one = (img) => new Promise((resolve) => {
+    if (img.complete) { resolve(); return; }
+    img.addEventListener('load', resolve, { once: true });
+    img.addEventListener('error', resolve, { once: true });
+  });
+  return Promise.race([
+    Promise.all(imgs.map(one)),
+    new Promise((r) => setTimeout(r, PRINT_COVER_WAIT_MS))
+  ]).then(() => {
+    for (const img of imgs) {
+      if (img.isConnected && !(img.complete && img.naturalWidth > 0)) {
+        const t = document.createElement('div');
+        t.innerHTML = printPlaceholder({ title: img.dataset.title, authors: img.dataset.author ? [img.dataset.author] : [] });
+        img.replaceWith(t.firstElementChild);
+      }
+    }
+  });
+}
+
+// armed: afdrukken gestart via de knop. Alleen dan toont de afdrukweergave de
+// deellijst; zelf Ctrl+P of "Afdrukken" uit het menu geeft de gewone pagina.
+// De klasse blijft na afloop staan (Android meldt afterprint soms al terwijl
+// het afdrukvoorbeeld nog wordt opgebouwd); de volgende beforeprint ruimt op.
+const printTitle = { saved: null, armed: false };
+
+function restoreTitle() {
+  if (printTitle.saved !== null) {
+    document.title = printTitle.saved;
+    printTitle.saved = null;
+  }
+}
+window.addEventListener('beforeprint', () => {
+  if (!printTitle.armed) document.body.classList.remove('print-share');
+});
+window.addEventListener('afterprint', () => {
+  printTitle.armed = false;
+  restoreTitle();
+});
+
+async function sharePrint() {
+  if (!shareBooks().length) return;
+  shareOut.busy = true;
+  const opts = { notes: shareOut.notes, covers: shareOut.covers };
+  buildPrint(opts);
+  closeSheet();
+  if (opts.covers && $('#print').querySelector('img.p-cover')) {
+    toast('PDF voorbereiden…', { duration: PRINT_COVER_WAIT_MS + 1000 });
+    await waitForPrintCovers();
+  }
+  shareOut.busy = false;
+  toast.timer && clearTimeout(toast.timer);
+  $('#toast').classList.remove('show', 'has-action');
+  // Standaard bestandsnaam bij "Opslaan als PDF"
+  if (printTitle.saved === null) printTitle.saved = document.title;
+  document.title = `Boekenlijst ${fmtLongDate(new Date())}`;
+  document.body.classList.add('print-share');
+  printTitle.armed = true;
+  try {
+    window.print();
+  } catch (err) {
+    printTitle.armed = false;
+    document.body.classList.remove('print-share');
+    restoreTitle();
+    toast('Afdrukken is niet gelukt: ' + (err?.message || err));
+  }
+}
 
 /* ---------- Zoeken ---------- */
 

@@ -360,3 +360,77 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
+
+/* Delen als tekst / PDF (fase 2e, B24–B26) */
+.share-send { width: 100%; margin: 0 0 12px; }
+.switches { display: grid; gap: 4px; margin-top: 6px; }
+.switch-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0; padding: 10px 2px; color: var(--text); font-size: 1rem; cursor: pointer;
+  border-bottom: 1px solid var(--line);
+}
+.switch-text { display: flex; flex-direction: column; min-width: 0; }
+.switch-text small { color: var(--muted); font-size: .78rem; }
+input.switch {
+  -webkit-appearance: none; appearance: none; flex: none;
+  width: 46px; height: 28px; padding: 0; margin: 0; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--line); position: relative; cursor: pointer;
+  transition: background .15s;
+}
+input.switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .15s;
+}
+input.switch:checked { background: var(--accent); border-color: var(--accent); }
+input.switch:checked::after { transform: translateX(18px); }
+input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.share-out-actions { display: grid; gap: 8px; margin: 16px 0 4px; }
+.share-out-actions button { width: 100%; padding: 12px 14px; }
+.share-out-actions button.link { width: auto; justify-self: center; color: var(--accent); padding: 8px 12px; }
+.share-out-hint { text-align: center; }
+
+/* Afdrukweergave (fase 2e, B25): alleen de deellijst, zwart op wit, A4 */
+.print-root { display: none; }
+@media print {
+  @page { size: A4 portrait; margin: 15mm; }
+  body.print-share { background: #fff !important; color: #000 !important; }
+  body.print-share > :not(#print) { display: none !important; }
+  body.print-share .print-root { display: block; }
+  .print-root {
+    color: #000; background: #fff;
+    font: 10.5pt/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  .print-root h1 { font-size: 20pt; margin: 0 0 2pt; color: #000; }
+  .print-root .p-sub { margin: 0 0 8mm; color: #444; font-size: 10pt; }
+  .print-root h2 {
+    font-size: 13pt; margin: 6mm 0 3mm; padding-bottom: 1.5mm;
+    border-bottom: .5pt solid #999; color: #000;
+    break-after: avoid; page-break-after: avoid;
+  }
+  .p-group:first-of-type h2 { margin-top: 0; }
+  .p-keep, .p-book { break-inside: avoid; page-break-inside: avoid; }
+  .p-book { display: flex; gap: 4mm; align-items: flex-start; margin: 0 0 4mm; }
+  .p-cover {
+    flex: none; width: 18mm; height: 27mm; object-fit: cover; border-radius: 1mm;
+    border: .3pt solid #ccc;
+  }
+  .p-ph {
+    --hue: 150;
+    display: flex; flex-direction: column; justify-content: space-between; gap: 1mm;
+    padding: 1.5mm 1mm 1mm 2mm; overflow: hidden; box-sizing: border-box;
+    background: hsl(var(--hue) 32% 40%); color: #fff; line-height: 1.15;
+    box-shadow: inset 1mm 0 0 rgba(0, 0, 0, .18);
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .p-ph .ph-title { font-size: 6pt; }
+  .p-ph .ph-author { font-size: 5pt; }
+  .p-info { min-width: 0; flex: 1; }
+  .p-title { font-weight: 700; font-size: 11pt; }
+  .p-authors { color: #333; }
+  .p-meta { color: #444; font-size: 9.5pt; margin-top: .5mm; }
+  .p-stars { letter-spacing: .5pt; color: #000; }
+  .p-note {
+    margin-top: 1.5mm; padding-left: 2.5mm; border-left: .75pt solid #999;
+    font-style: italic; color: #222; overflow-wrap: anywhere;
+  }
+}
