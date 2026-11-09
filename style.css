@@ -334,14 +334,23 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .share-go .msg { text-align: center; margin: 0; }
 .share-go button { width: 100%; }
 .share-sub { color: var(--muted); font-size: .85rem; margin: -6px 0 12px; }
-.share-item { cursor: default; align-items: center; }
+.share-item { cursor: default; align-items: flex-start; }
 .share-item:active { transform: none; }
+.share-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; }
+.share-meta .meta { margin: 0; }
+.share-note {
+  margin: 6px 0 0; padding-left: 8px; border-left: 2px solid var(--line);
+  color: var(--text); font-size: .85rem; font-style: italic; white-space: pre-line;
+  overflow-wrap: anywhere; cursor: pointer;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
+.share-note.open { display: block; -webkit-line-clamp: unset; }
 .share-label {
-  display: inline-block; margin-top: 4px; padding: 1px 8px; border-radius: 99px;
+  display: inline-block; padding: 1px 8px; border-radius: 99px;
   border: 1px solid var(--line); color: var(--muted); font-size: .75rem;
 }
 .share-remove {
-  flex: none; align-self: center; width: 40px; height: 40px; padding: 0;
+  flex: none; align-self: flex-start; margin: -4px -4px 0 0; width: 40px; height: 40px; padding: 0;
   border: none; background: none; color: var(--muted); font-size: 1.1rem; border-radius: 50%;
 }
 .share-remove:active { background: var(--line); }

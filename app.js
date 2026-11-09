@@ -942,6 +942,7 @@ const share = {
   saved: null,   // { created_at, sources, years, book_ids } – years: null = alle jaren
   adding: false, // stap 1 vanuit "Aanvullen"
   draft: null,   // keuzes in stap 1: { sources: Set, years: Set | null }
+  openNotes: new Set(), // uitgeklapte notities (alleen voor de weergave)
   warned: false  // melding "kan niet bewaren" al getoond
 };
 
@@ -955,6 +956,7 @@ function loadShare() {
   share.adding = false;
   share.draft = null;
   share.warned = false;
+  share.openNotes.clear();
   if (!state.user) return;
   try {
     const v = JSON.parse(localStorage.getItem(shareKey()) || 'null');
@@ -1142,7 +1144,9 @@ function renderShareList(el) {
         <div class="info">
           <div class="title">${esc(b.title)}</div>
           <div class="authors">${esc(authorsText(b.authors))}</div>
-          <span class="share-label">${esc(shareLabel(b))}</span>
+          <div class="share-meta"><span class="share-label">${esc(shareLabel(b))}</span>${shareMeta(b)}</div>
+          ${b.notes ? `<p class="share-note${share.openNotes.has(b.id) ? ' open' : ''}" data-share-note="${esc(b.id)}"
+               role="button" tabindex="0" aria-expanded="${share.openNotes.has(b.id)}">${esc(b.notes)}</p>` : ''}
         </div>
         <button type="button" class="share-remove" data-share-remove="${esc(b.id)}" data-focus="rm-${esc(b.id)}"
                 aria-label="“${esc(b.title)}” uit de deellijst halen" title="Uit de deellijst halen">✕</button>
@@ -1152,6 +1156,14 @@ function renderShareList(el) {
       <button type="button" data-share-action="add" data-focus="add">Aanvullen</button>
       <button type="button" ${n ? '' : 'class="primary"'} data-share-action="reset" data-focus="reset">Opnieuw beginnen</button>
     </div>`;
+}
+
+// Bladzijdes en waardering naast het label (lege waarden weggelaten)
+function shareMeta(b) {
+  const parts = [];
+  if (b.pages) parts.push(`${b.pages} blz.`);
+  if (b.rating) parts.push(`<span class="stars" aria-label="${b.rating} van 5 sterren">${stars(b.rating)}</span>`);
+  return parts.length ? ` <span class="meta">${parts.join(' · ')}</span>` : '';
 }
 
 function shareMake() {
@@ -1208,6 +1220,19 @@ function shareReset() {
   window.scrollTo(0, 0);
 }
 
+function toggleShareNote(note) {
+  const id = note.dataset.shareNote;
+  const open = !share.openNotes.has(id);
+  if (open) share.openNotes.add(id); else share.openNotes.delete(id);
+  note.classList.toggle('open', open);
+  note.setAttribute('aria-expanded', String(open));
+}
+
+$('#share').addEventListener('keydown', (e) => {
+  const note = e.target.closest?.('[data-share-note]');
+  if (note && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleShareNote(note); }
+});
+
 $('#share').addEventListener('change', (e) => {
   const src = e.target.dataset?.shareSource;
   if (!src || !share.draft) return;
@@ -1218,6 +1243,10 @@ $('#share').addEventListener('change', (e) => {
 $('#share').addEventListener('click', (e) => {
   const rm = e.target.closest('[data-share-remove]');
   if (rm) { shareRemove(rm.dataset.shareRemove); return; }
+
+  // Tik op een notitie: in- of uitklappen (lange notities tonen eerst 3 regels)
+  const note = e.target.closest('[data-share-note]');
+  if (note) { toggleShareNote(note); return; }
 
   const yr = e.target.closest('[data-share-year]');
   if (yr && share.draft) {
