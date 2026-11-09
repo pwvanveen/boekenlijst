@@ -90,17 +90,29 @@
     <!-- App -->
     <section id="view-app" hidden>
       <div class="tab" data-tab="bezig">
-        <h2>Bezig</h2>
+        <div class="list-head">
+          <h2>Bezig</h2>
+          <button type="button" class="sort-btn" data-sheet="bezig" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden>⇅<span class="sort-dot" hidden></span></button>
+        </div>
+        <p class="filter-bar" data-filterbar="bezig" hidden></p>
         <ul class="booklist" id="list-bezig"></ul>
       </div>
 
       <div class="tab" data-tab="wil_lezen" hidden>
-        <h2>Wil lezen</h2>
+        <div class="list-head">
+          <h2>Wil lezen</h2>
+          <button type="button" class="sort-btn" data-sheet="wil_lezen" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden>⇅<span class="sort-dot" hidden></span></button>
+        </div>
+        <p class="filter-bar" data-filterbar="wil_lezen" hidden></p>
         <ul class="booklist" id="list-wil"></ul>
       </div>
 
       <div class="tab" data-tab="gelezen" hidden>
-        <h2>Gelezen per jaar</h2>
+        <div class="list-head">
+          <h2>Gelezen per jaar</h2>
+          <button type="button" class="sort-btn" data-sheet="gelezen" aria-label="Sorteren en filteren" title="Sorteren en filteren" hidden>⇅<span class="sort-dot" hidden></span></button>
+        </div>
+        <p class="filter-bar" data-filterbar="gelezen" hidden></p>
         <div id="gelezen"></div>
       </div>
 
@@ -214,6 +226,21 @@
     <div class="scan-actions">
       <button type="button" id="scan-torch" hidden aria-pressed="false">🔦 Zaklamp</button>
       <button type="button" id="scan-cancel">Annuleren</button>
+    </div>
+  </div>
+
+  <!-- Sorteren en filteren: onderpaneel (fase 2c, B19/B20) -->
+  <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1" hidden>
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <h2 id="sheet-title">Sorteren en filteren</h2>
+      <span id="sheet-sub" class="meta"></span>
+    </div>
+    <div id="sheet-body" class="sheet-body"></div>
+    <div class="sheet-foot">
+      <button type="button" id="sheet-clear">Wissen</button>
+      <button type="button" id="sheet-done" class="primary">Klaar</button>
     </div>
   </div>
 

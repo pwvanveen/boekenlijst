@@ -2,10 +2,12 @@
 
 /* =========================================================
    Boekenlijst – fase 1 (MVP) + 2a (barcode scannen) + 2b (covers)
+   + 2c (sorteren en filteren)
    Inloggen (magic link), zoeken (Google Books → Open Library),
    toevoegen, status/datums, lijsten Bezig / Wil lezen / Gelezen per jaar,
    ISBN-barcode scannen met de camera (BarcodeDetector, met polyfill),
-   covers trapsgewijs (Google → Open Library op ISBN → eigen foto, B18).
+   covers trapsgewijs (Google → Open Library op ISBN → eigen foto, B18),
+   sorteren en filteren per lijst via ⇅ en een onderpaneel (B19, B20).
    ========================================================= */
 
 // Voor het vangnet in index.html: app.js is gestart
@@ -47,7 +49,11 @@ const state = {
   // Cover-wijziging in het open venster: { url } = gevonden via Open Library,
   // { blob, preview } = eigen foto (wordt pas bij Opslaan geüpload)
   coverDraft: null,
-  openYears: new Set([String(new Date().getFullYear())])
+  openYears: new Set([String(new Date().getFullYear())]),
+  // Fase 2c: per tabblad sortering + filters (views), en jaargroepen die je
+  // tijdens filteren zelf hebt dichtgeklapt
+  views: null,
+  closedFiltered: new Set()
 };
 
 /* ---------- Hulpfuncties ---------- */
@@ -158,6 +164,7 @@ function setUser(user) {
   $('#user-email').textContent = user?.email ?? '';
 
   if (!changed) return;
+  resetViews(); // filters leeg, sortering van deze gebruiker (B20)
   if (user) {
     loadBooks();
   } else {
@@ -206,6 +213,7 @@ async function loadBooks() {
 
 function showTab(tab) {
   if (scan.active) closeScanner();
+  if (sheet.open) closeSheet();
   document.querySelectorAll('.tab').forEach((el) => { el.hidden = el.dataset.tab !== tab; });
   document.querySelectorAll('#tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   window.scrollTo(0, 0);
@@ -273,64 +281,107 @@ function metaRead(b) {
   return parts.join(' · ');
 }
 
+const LIST_SEL = { bezig: '#list-bezig', wil_lezen: '#list-wil' };
+
+// Boeken die in een tabblad thuishoren (zonder filters)
+function baseBooks(list) {
+  const statuses = LISTS[list].statuses;
+  return state.books.filter((b) => statuses.includes(b.status));
+}
+
+function metaBezig(b) {
+  return [
+    b.date_started ? `Begonnen ${esc(fmtDate(b.date_started))}` : '',
+    b.pages ? `${b.pages} blz.` : ''
+  ].filter(Boolean).join(' · ');
+}
+
+function metaWil(b) {
+  return [
+    b.published_year ? esc(b.published_year) : '',
+    b.pages ? `${b.pages} blz.` : ''
+  ].filter(Boolean).join(' · ');
+}
+
+function noMatchHtml(list, tag = 'li') {
+  return `<${tag} class="empty">Geen boeken die aan je filters voldoen.<br>
+    <button type="button" class="link" data-action="clear-filters" data-list="${list}">Wissen</button></${tag}>`;
+}
+
 function render() {
-  const by = (s) => state.books.filter((b) => b.status === s);
+  renderSimpleList('bezig', metaBezig,
+    'Je bent nu niets aan het lezen. Zoek een boek via “Zoeken”, of zet een boek uit “Wil lezen” op Bezig.');
+  renderSimpleList('wil_lezen', metaWil,
+    'Je verlanglijst is leeg. Voeg boeken toe via “Zoeken”.');
+  renderGelezen();
 
-  const bezig = by('bezig').sort((a, b) => (b.date_started || '').localeCompare(a.date_started || ''));
-  $('#list-bezig').innerHTML = bezig.length
-    ? bezig.map((b) => bookLi(b, [
-        b.date_started ? `Begonnen ${esc(fmtDate(b.date_started))}` : '',
-        b.pages ? `${b.pages} blz.` : ''
-      ].filter(Boolean).join(' · '))).join('')
-    : emptyLi('Je bent nu niets aan het lezen. Zoek een boek via “Zoeken”, of zet een boek uit “Wil lezen” op Bezig.');
-
-  const wil = by('wil_lezen').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
-  $('#list-wil').innerHTML = wil.length
-    ? wil.map((b) => bookLi(b, [
-        b.published_year ? esc(b.published_year) : '',
-        b.pages ? `${b.pages} blz.` : ''
-      ].filter(Boolean).join(' · '))).join('')
-    : emptyLi('Je verlanglijst is leeg. Voeg boeken toe via “Zoeken”.');
-
-  renderGelezen(by('gelezen'), by('gestopt'));
-
-  const counts = { bezig: bezig.length, wil_lezen: wil.length, gelezen: by('gelezen').length };
+  // Tellers in de tabbalk: altijd zonder filters
+  const counts = {
+    bezig: baseBooks('bezig').length,
+    wil_lezen: baseBooks('wil_lezen').length,
+    gelezen: state.books.filter((b) => b.status === 'gelezen').length
+  };
   document.querySelectorAll('[data-count]').forEach((el) => {
     const n = counts[el.dataset.count];
     el.textContent = n ? String(n) : '';
   });
+
+  if (sheet.open) updateSheetSummary();
 }
 
-function renderGelezen(read, stopped) {
+function renderSimpleList(list, metaFn, emptyText) {
+  const all = baseBooks(list);
+  const shown = sortBooks(list, applyFilters(list, all));
+  updateListChrome(list, all.length, shown.length);
+  $(LIST_SEL[list]).innerHTML = !all.length
+    ? emptyLi(emptyText)
+    : shown.length ? shown.map((b) => bookLi(b, metaFn(b))).join('') : noMatchHtml(list);
+}
+
+function renderGelezen() {
+  const list = 'gelezen';
+  const all = baseBooks(list);
+  const shown = applyFilters(list, all);
+  const filtering = filtersActive(list);
+  updateListChrome(list, all.length, shown.length);
+
+  const read = shown.filter((b) => b.status === 'gelezen');
+  const stopped = sortBooks(list, shown.filter((b) => b.status === 'gestopt'));
+
   const groups = new Map();
   for (const b of read) {
     const y = b.date_finished ? b.date_finished.slice(0, 4) : 'zonder';
     if (!groups.has(y)) groups.set(y, []);
     groups.get(y).push(b);
   }
+  // Jaargroepen blijven: nieuwste jaar bovenaan, sortering geldt binnen elke groep
   const years = [...groups.keys()].sort((a, b) =>
     a === 'zonder' ? 1 : b === 'zonder' ? -1 : b.localeCompare(a));
 
-  // Als geen enkel jaar openstaat, het meest recente openen
-  if (years.length && !years.some((y) => state.openYears.has(y))) state.openYears.add(years[0]);
+  // Zonder filter: als geen enkel jaar openstaat, het meest recente openen.
+  // Met filter: alle groepen met treffers open, tenzij je er zelf een dichtklapt.
+  if (!filtering && years.length && !years.some((y) => state.openYears.has(y))) state.openYears.add(years[0]);
+  const isOpen = (y) => (filtering ? !state.closedFiltered.has(y) : state.openYears.has(y));
 
-  let html = read.length ? '' : '<p class="empty">Nog geen gelezen boeken. Zet een boek op “Gelezen” om het hier te zien.</p>';
+  let html = '';
+  if (!all.length) html = '<p class="empty">Nog geen gelezen boeken. Zet een boek op “Gelezen” om het hier te zien.</p>';
+  else if (!shown.length) html = noMatchHtml(list, 'p');
 
   for (const y of years) {
-    const list = groups.get(y).sort((a, b) => (b.date_finished || '').localeCompare(a.date_finished || ''));
-    const pages = list.reduce((s, b) => s + (b.pages || 0), 0);
+    const items = sortBooks(list, groups.get(y));
+    const pages = items.reduce((s, b) => s + (b.pages || 0), 0); // totalen van de gefilterde set
     const label = y === 'zonder' ? 'Zonder einddatum' : y;
-    html += `<details class="year" data-year="${esc(y)}" ${state.openYears.has(y) ? 'open' : ''}>
+    html += `<details class="year" data-year="${esc(y)}" ${isOpen(y) ? 'open' : ''}>
       <summary>
         <span class="year-label">${esc(label)}</span>
-        <span class="year-stats">${list.length} ${list.length === 1 ? 'boek' : 'boeken'}${pages ? ` · ${pages.toLocaleString('nl-NL')} blz.` : ''}</span>
+        <span class="year-stats">${items.length} ${items.length === 1 ? 'boek' : 'boeken'}${pages ? ` · ${pages.toLocaleString('nl-NL')} blz.` : ''}</span>
       </summary>
-      <ul class="booklist">${list.map((b) => bookLi(b, metaRead(b))).join('')}</ul>
+      <ul class="booklist">${items.map((b) => bookLi(b, metaRead(b))).join('')}</ul>
     </details>`;
   }
 
   if (stopped.length) {
-    html += `<details class="year" data-year="gestopt" ${state.openYears.has('gestopt') ? 'open' : ''}>
+    html += `<details class="year" data-year="gestopt" ${isOpen('gestopt') ? 'open' : ''}>
       <summary>
         <span class="year-label">Gestopt</span>
         <span class="year-stats">${stopped.length} ${stopped.length === 1 ? 'boek' : 'boeken'}</span>
@@ -342,10 +393,489 @@ function renderGelezen(read, stopped) {
   const el = $('#gelezen');
   el.innerHTML = html;
   el.querySelectorAll('details').forEach((d) => d.addEventListener('toggle', () => {
-    if (d.open) state.openYears.add(d.dataset.year);
-    else state.openYears.delete(d.dataset.year);
+    if (!d.isConnected) return; // oude weergave, al vervangen
+    const y = d.dataset.year;
+    if (filtersActive(list)) {
+      if (d.open) state.closedFiltered.delete(y); else state.closedFiltered.add(y);
+    } else if (d.open) state.openYears.add(y);
+    else state.openYears.delete(y);
   }));
 }
+
+/* ---------- Sorteren en filteren (fase 2c, B19/B20) ---------- */
+
+// Per tabblad: welke statussen erin staan en welk datumveld "datum" betekent
+const LISTS = {
+  bezig:     { title: 'Bezig',            statuses: ['bezig'],              dateField: 'date_started',  dateLabel: 'Startdatum' },
+  wil_lezen: { title: 'Wil lezen',        statuses: ['wil_lezen'],          dateField: 'created_at',    dateLabel: 'Datum toegevoegd' },
+  gelezen:   { title: 'Gelezen per jaar', statuses: ['gelezen', 'gestopt'], dateField: 'date_finished', dateLabel: 'Einddatum' }
+};
+
+const SORT_FIELDS = ['datum', 'titel', 'auteur', 'paginas', 'waardering'];
+const SORT_LABEL = { titel: 'Titel', auteur: 'Auteur', paginas: "Pagina's", waardering: 'Waardering' };
+// Richting die het meest voor de hand ligt bij het kiezen van een veld
+const SORT_NATURAL_DIR = { datum: 'desc', titel: 'asc', auteur: 'asc', paginas: 'desc', waardering: 'desc' };
+const SORT_DIR_LABEL = {
+  datum:      { desc: 'Nieuwste eerst', asc: 'Oudste eerst' },
+  titel:      { asc: 'A → Z', desc: 'Z → A' },
+  auteur:     { asc: 'A → Z', desc: 'Z → A' },
+  paginas:    { desc: 'Meeste eerst', asc: 'Minste eerst' },
+  waardering: { desc: 'Hoogste eerst', asc: 'Laagste eerst' }
+};
+const DEFAULT_SORT = { field: 'datum', dir: 'desc' };
+const UNKNOWN_LANG = '?';
+
+const collator = new Intl.Collator('nl', { sensitivity: 'base' });
+
+function emptyFilters() {
+  return { text: '', author: '', rating: 0, lang: '', year: '' };
+}
+
+function newViews() {
+  const v = {};
+  for (const list of Object.keys(LISTS)) v[list] = { sort: loadSort(list), filters: emptyFilters() };
+  return v;
+}
+
+function getView(list) {
+  if (!state.views) state.views = newViews();
+  return state.views[list];
+}
+
+// Bij een andere gebruiker (of uitloggen): filters leeg, sortering van die gebruiker
+function resetViews() {
+  state.views = newViews();
+  state.closedFiltered.clear();
+}
+
+/* Sortering bewaren per gebruiker + lijst (B20). localStorage kan ontbreken of
+   weigeren (privévenster, geblokkeerde opslag): dan gewoon de standaard. */
+function sortStorageKey(list) {
+  return `boekenlijst.sort.${state.user?.id || 'anon'}.${list}`;
+}
+
+function loadSort(list) {
+  try {
+    const v = JSON.parse(localStorage.getItem(sortStorageKey(list)) || 'null');
+    if (v && SORT_FIELDS.includes(v.field) && (v.dir === 'asc' || v.dir === 'desc')) return { field: v.field, dir: v.dir };
+  } catch (_) { /* standaard gebruiken */ }
+  return { ...DEFAULT_SORT };
+}
+
+function saveSort(list) {
+  try { localStorage.setItem(sortStorageKey(list), JSON.stringify(getView(list).sort)); } catch (_) { /* niet erg */ }
+}
+
+// Hoofdletter- en accentongevoelig vergelijken: "Émile" → "emile"
+function fold(s) {
+  return String(s ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
+}
+
+/* Taalcodes gelijktrekken: Google geeft "nl"/"en", Open Library "dut"/"eng" (MARC). */
+const LANG_ALIASES = {
+  dut: 'nl', nld: 'nl', eng: 'en', ger: 'de', deu: 'de', fre: 'fr', fra: 'fr', spa: 'es', ita: 'it',
+  por: 'pt', swe: 'sv', dan: 'da', nor: 'no', nob: 'nb', nno: 'nn', fin: 'fi', ice: 'is', isl: 'is',
+  fry: 'fy', fri: 'fy', afr: 'af', pol: 'pl', cze: 'cs', ces: 'cs', slo: 'sk', slk: 'sk', slv: 'sl',
+  hun: 'hu', rum: 'ro', ron: 'ro', bul: 'bg', rus: 'ru', ukr: 'uk', gre: 'el', ell: 'el', tur: 'tr',
+  ara: 'ar', heb: 'he', per: 'fa', fas: 'fa', hin: 'hi', chi: 'zh', zho: 'zh', jpn: 'ja', kor: 'ko',
+  vie: 'vi', tha: 'th', ind: 'id', may: 'ms', msa: 'ms', lat: 'la', cat: 'ca', baq: 'eu', eus: 'eu',
+  glg: 'gl', wel: 'cy', cym: 'cy', gle: 'ga', hrv: 'hr', srp: 'sr', est: 'et', lav: 'lv', lit: 'lt',
+  epo: 'eo', ltz: 'lb',
+  iw: 'he', in: 'id', ji: 'yi',          // oude ISO-codes (komen bij Google soms voor)
+  und: null, zxx: null                    // onbepaald / geen taal → Onbekend
+};
+
+function normalizeLang(code) {
+  if (!code) return null;
+  const c = String(code).trim().toLowerCase().split(/[-_]/)[0];
+  if (Object.prototype.hasOwnProperty.call(LANG_ALIASES, c)) return LANG_ALIASES[c];
+  return /^[a-z]{2,3}$/.test(c) ? c : null;
+}
+
+let langNames = null;
+function langName(code) {
+  if (!code || code === UNKNOWN_LANG) return 'Onbekend';
+  let name = null;
+  try {
+    langNames = langNames || new Intl.DisplayNames(['nl'], { type: 'language' });
+    name = langNames.of(code);
+  } catch (_) { /* oude browser of ongeldige code */ }
+  if (!name || name.toLowerCase() === code) return code.toUpperCase();
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function filtersActive(list) {
+  const f = getView(list).filters;
+  return !!(f.text.trim() || f.author || f.rating || f.lang || f.year);
+}
+
+// Alle filters combineren met EN
+function applyFilters(list, books) {
+  const f = getView(list).filters;
+  const words = fold(f.text).split(/\s+/).filter(Boolean);
+  return books.filter((b) => {
+    if (words.length) {
+      const hay = fold(`${b.title || ''} ${authorsText(b.authors)}`);
+      if (!words.every((w) => hay.includes(w))) return false;
+    }
+    if (f.author && !(b.authors || []).some((a) => fold(a) === f.author)) return false;
+    if (f.rating && !(b.rating >= f.rating)) return false; // zonder waardering valt weg
+    if (f.lang && (normalizeLang(b.language) || UNKNOWN_LANG) !== f.lang) return false;
+    // Jaarfilter: alleen gelezen boeken uit dat jaar (Zonder einddatum en Gestopt vallen weg)
+    if (f.year && !(b.status === 'gelezen' && (b.date_finished || '').slice(0, 4) === f.year)) return false;
+    return true;
+  });
+}
+
+function sortValue(list, field, b) {
+  switch (field) {
+    case 'datum':
+      // Gestopte boeken hebben vaak geen einddatum: dan de startdatum
+      if (list === 'gelezen' && b.status === 'gestopt') return b.date_finished || b.date_started;
+      return b[LISTS[list].dateField];
+    case 'titel': return b.title;
+    case 'auteur': return (b.authors || [])[0];
+    case 'paginas': return b.pages;
+    case 'waardering': return b.rating;
+    default: return null;
+  }
+}
+
+function isBlank(v) {
+  return v === null || v === undefined || (typeof v === 'string' && !v.trim());
+}
+
+function sortBooks(list, books) {
+  const { field, dir } = getView(list).sort;
+  const sign = dir === 'asc' ? 1 : -1;
+  const isText = field === 'titel' || field === 'auteur';
+  return [...books].sort((a, b) => {
+    const va = sortValue(list, field, a);
+    const vb = sortValue(list, field, b);
+    const ea = isBlank(va);
+    const eb = isBlank(vb);
+    // Lege waarden altijd onderaan, ongeacht de richting
+    if (ea !== eb) return ea ? 1 : -1;
+    let c = 0;
+    if (!ea) {
+      if (isText) c = collator.compare(va, vb);
+      else if (typeof va === 'number' && typeof vb === 'number') c = va - vb;
+      else c = va < vb ? -1 : va > vb ? 1 : 0; // datums als tekst (JJJJ-MM-DD)
+    }
+    if (c) return c * sign;
+    // Gelijk: op titel, daarna vast op id (stabiele volgorde)
+    return collator.compare(a.title || '', b.title || '') || String(a.id).localeCompare(String(b.id));
+  });
+}
+
+// Wat er in déze lijst te kiezen valt
+function filterOptions(list, books) {
+  const f = getView(list).filters;
+
+  const authors = new Map(); // gevouwen naam → weergave (eerste schrijfwijze)
+  for (const b of books) {
+    for (const a of b.authors || []) {
+      const t = String(a).trim();
+      if (t && !authors.has(fold(t))) authors.set(fold(t), t);
+    }
+  }
+  if (f.author && !authors.has(f.author)) authors.set(f.author, f.author);
+
+  const langs = new Map();
+  for (const b of books) {
+    const c = normalizeLang(b.language) || UNKNOWN_LANG;
+    if (!langs.has(c)) langs.set(c, langName(c));
+  }
+  if (f.lang && !langs.has(f.lang)) langs.set(f.lang, langName(f.lang));
+
+  const ratings = new Set(books.map((b) => b.rating || 0));
+
+  const years = [...new Set(books
+    .filter((b) => b.status === 'gelezen' && b.date_finished)
+    .map((b) => b.date_finished.slice(0, 4)))];
+  if (f.year && !years.includes(f.year)) years.push(f.year);
+  years.sort((a, b) => b.localeCompare(a));
+  const otherGroups = books.some((b) => b.status === 'gestopt' || (b.status === 'gelezen' && !b.date_finished));
+
+  const byName = (a, b) => collator.compare(a[1], b[1]);
+  return {
+    authors: [...authors].sort(byName),
+    langs: [...langs].sort((a, b) =>
+      a[0] === UNKNOWN_LANG ? 1 : b[0] === UNKNOWN_LANG ? -1 : byName(a, b)),
+    years,
+    // Een filter alleen tonen als er iets te kiezen valt (of als hij aan staat)
+    show: {
+      author: authors.size >= 2 || !!f.author,
+      rating: ratings.size >= 2 || !!f.rating,
+      lang: langs.size >= 2 || !!f.lang,
+      year: list === 'gelezen' && (years.length >= 2 || (years.length === 1 && otherGroups) || !!f.year)
+    }
+  };
+}
+
+// ⇅-icoon, stipje en regel "x van y boeken · Wissen" bij een lijst
+function updateListChrome(list, total, shown) {
+  const active = filtersActive(list);
+  const btn = document.querySelector(`.sort-btn[data-sheet="${list}"]`);
+  btn.hidden = total === 0;
+  btn.classList.toggle('active', active);
+  btn.querySelector('.sort-dot').hidden = !active;
+  btn.setAttribute('aria-label', active ? 'Sorteren en filteren (filter actief)' : 'Sorteren en filteren');
+
+  const bar = document.querySelector(`[data-filterbar="${list}"]`);
+  bar.hidden = !active || total === 0;
+  bar.innerHTML = bar.hidden ? '' : `${shown} van ${total} ${total === 1 ? 'boek' : 'boeken'} ·
+    <button type="button" class="link" data-action="clear-filters" data-list="${list}">Wissen</button>`;
+}
+
+function setFilter(list, key, value) {
+  getView(list).filters[key] = value;
+  state.closedFiltered.clear(); // nieuwe filter: alle groepen met treffers weer open
+  render();
+}
+
+function clearFilters(list) {
+  getView(list).filters = emptyFilters();
+  state.closedFiltered.clear();
+  render();
+  if (sheet.open && sheet.list === list) renderSheet();
+}
+
+document.addEventListener('click', (e) => {
+  const clr = e.target.closest('[data-action="clear-filters"]');
+  if (clr) { clearFilters(clr.dataset.list); return; }
+  const sortBtn = e.target.closest('.sort-btn[data-sheet]');
+  if (sortBtn) openSheet(sortBtn.dataset.sheet);
+});
+
+/* ---------- Onderpaneel ---------- */
+
+const sheet = {
+  open: false,
+  list: null,
+  pushedHistory: false,
+  opener: null,
+  hideTimer: null,
+  drag: null
+};
+const sheetEl = $('#sheet');
+const sheetBackdrop = $('#sheet-backdrop');
+
+function chipsHtml(group, items, labelledBy, extraClass = '') {
+  return `<div class="chips ${extraClass}" role="radiogroup" ${labelledBy ? `aria-labelledby="${labelledBy}"` : ''}>${
+    items.map(([value, label, checked]) =>
+      `<button type="button" role="radio" aria-checked="${checked}" data-group="${group}" data-value="${esc(value)}">${esc(label)}</button>`
+    ).join('')}</div>`;
+}
+
+function renderSheet() {
+  const list = sheet.list;
+  const v = getView(list);
+  const f = v.filters;
+  const opts = filterOptions(list, baseBooks(list));
+
+  const fields = SORT_FIELDS.map((k) => [k, k === 'datum' ? LISTS[list].dateLabel : SORT_LABEL[k], v.sort.field === k]);
+  const dirLabels = SORT_DIR_LABEL[v.sort.field];
+  const first = SORT_NATURAL_DIR[v.sort.field];
+  const second = first === 'asc' ? 'desc' : 'asc';
+  const dirs = [first, second].map((d) => [d, dirLabels[d], v.sort.dir === d]);
+
+  let h = `<h3 id="sh-sort">Sorteren</h3>
+    ${chipsHtml('sort-field', fields, 'sh-sort')}
+    ${chipsHtml('sort-dir', dirs, 'sh-sort')}
+    <h3>Filteren</h3>
+    <label for="flt-text">Tekst</label>
+    <input type="search" id="flt-text" value="${esc(f.text)}" placeholder="Zoek in titel of auteur"
+           autocomplete="off" enterkeyhint="done">`;
+
+  if (opts.show.author) {
+    h += `<label for="flt-author">Auteur</label>
+      <select id="flt-author" data-filter="author">
+        <option value="">Alle auteurs</option>
+        ${opts.authors.map(([k, name]) => `<option value="${esc(k)}" ${k === f.author ? 'selected' : ''}>${esc(name)}</option>`).join('')}
+      </select>`;
+  }
+  if (opts.show.rating) {
+    const r = [[0, 'Alle'], [1, '1+ ★'], [2, '2+ ★'], [3, '3+ ★'], [4, '4+ ★'], [5, '5 ★']]
+      .map(([n, label]) => [n, label, f.rating === n]);
+    h += `<label id="flt-rating-label">Waardering (minimaal)</label>${chipsHtml('rating', r, 'flt-rating-label', 'compact')}`;
+  }
+  if (opts.show.lang) {
+    h += `<label for="flt-lang">Taal</label>
+      <select id="flt-lang" data-filter="lang">
+        <option value="">Alle talen</option>
+        ${opts.langs.map(([c, name]) => `<option value="${esc(c)}" ${c === f.lang ? 'selected' : ''}>${esc(name)}</option>`).join('')}
+      </select>`;
+  }
+  if (opts.show.year) {
+    h += `<label for="flt-year">Jaar uitgelezen</label>
+      <select id="flt-year" data-filter="year">
+        <option value="">Alle jaren</option>
+        ${opts.years.map((y) => `<option value="${esc(y)}" ${y === f.year ? 'selected' : ''}>${esc(y)}</option>`).join('')}
+      </select>`;
+  }
+
+  const body = $('#sheet-body');
+  const scrollTop = body.scrollTop;
+  body.innerHTML = h;
+  body.scrollTop = scrollTop;
+  updateSheetSummary();
+}
+
+// Aantallen in kop en knop bijwerken (zonder het paneel opnieuw op te bouwen)
+function updateSheetSummary() {
+  if (!sheet.open) return;
+  const list = sheet.list;
+  const total = baseBooks(list).length;
+  const n = applyFilters(list, baseBooks(list)).length;
+  const active = filtersActive(list);
+  $('#sheet-sub').textContent = active
+    ? `${LISTS[list].title} · ${n} van ${total}`
+    : LISTS[list].title;
+  $('#sheet-done').textContent = `Toon ${n} ${n === 1 ? 'boek' : 'boeken'}`;
+  $('#sheet-clear').disabled = !active;
+}
+
+function openSheet(list) {
+  if (sheet.open) return;
+  clearTimeout(sheet.hideTimer);
+  sheet.open = true;
+  sheet.list = list;
+  sheet.opener = document.activeElement;
+  renderSheet();
+  $('#sheet-body').scrollTop = 0;
+  updateKeyboardOffset();
+  sheetEl.style.transform = '';
+  sheetEl.hidden = false;
+  sheetBackdrop.hidden = false;
+  void sheetEl.offsetHeight; // reflow, zodat de schuifanimatie start
+  sheetEl.classList.add('open');
+  sheetBackdrop.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  sheetEl.focus({ preventScroll: true });
+
+  // Android-terugknop sluit het paneel i.p.v. de app te verlaten
+  history.pushState({ sheet: true }, '');
+  sheet.pushedHistory = true;
+}
+
+// fromPopstate = gesloten via de terugknop
+function closeSheet(fromPopstate = false) {
+  if (!sheet.open) return;
+  sheet.open = false;
+  sheet.drag = null;
+  if (sheetEl.contains(document.activeElement)) document.activeElement.blur(); // toetsenbord weg
+  sheetEl.classList.remove('open', 'dragging');
+  sheetEl.style.transform = '';
+  sheetBackdrop.classList.remove('open');
+  sheetBackdrop.style.opacity = '';
+  document.body.style.overflow = '';
+  sheet.hideTimer = setTimeout(() => {
+    if (sheet.open) return;
+    sheetEl.hidden = true;
+    sheetBackdrop.hidden = true;
+  }, 240);
+  if (sheet.opener && sheet.opener.isConnected) {
+    try { sheet.opener.focus({ preventScroll: true }); } catch (_) {}
+  }
+  if (sheet.pushedHistory) {
+    sheet.pushedHistory = false;
+    if (!fromPopstate) history.back();
+  }
+}
+
+$('#sheet-done').addEventListener('click', () => closeSheet());
+$('#sheet-clear').addEventListener('click', () => clearFilters(sheet.list));
+sheetBackdrop.addEventListener('click', () => closeSheet());
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheet.open) closeSheet(); });
+window.addEventListener('popstate', () => { if (sheet.open) closeSheet(true); });
+
+$('#sheet-body').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-group]');
+  if (!btn || !sheet.open) return;
+  const list = sheet.list;
+  const v = getView(list);
+  const value = btn.dataset.value;
+  if (btn.dataset.group === 'sort-field') {
+    if (v.sort.field === value) return;
+    v.sort = { field: value, dir: SORT_NATURAL_DIR[value] };
+    saveSort(list);
+    render();
+  } else if (btn.dataset.group === 'sort-dir') {
+    v.sort.dir = value;
+    saveSort(list);
+    render();
+  } else if (btn.dataset.group === 'rating') {
+    setFilter(list, 'rating', Number(value));
+  }
+  renderSheet();
+});
+
+$('#sheet-body').addEventListener('change', (e) => {
+  const key = e.target.dataset?.filter;
+  if (key && sheet.open) setFilter(sheet.list, key, e.target.value);
+});
+
+$('#sheet-body').addEventListener('input', (e) => {
+  if (e.target.id === 'flt-text' && sheet.open) setFilter(sheet.list, 'text', e.target.value);
+});
+
+$('#sheet-body').addEventListener('keydown', (e) => {
+  if (e.target.id === 'flt-text' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+});
+
+// Schermtoetsenbord: paneel boven het toetsenbord houden
+function updateKeyboardOffset() {
+  const vv = window.visualViewport;
+  const kb = vv ? Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)) : 0;
+  sheetEl.style.setProperty('--kb', kb + 'px');
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => { if (sheet.open) updateKeyboardOffset(); });
+  window.visualViewport.addEventListener('scroll', () => { if (sheet.open) updateKeyboardOffset(); });
+}
+
+// Veeg omlaag om te sluiten (vanaf de greep/kop, of in de inhoud als die bovenaan staat)
+sheetEl.addEventListener('touchstart', (e) => {
+  if (!sheet.open || e.touches.length !== 1) return;
+  if (e.target.closest('input, select, textarea')) return;
+  const body = $('#sheet-body');
+  const inBody = body.contains(e.target);
+  if (inBody && body.scrollTop > 0) return;
+  sheet.drag = { y0: e.touches[0].clientY, t0: Date.now(), dy: 0, active: false };
+}, { passive: true });
+
+sheetEl.addEventListener('touchmove', (e) => {
+  const d = sheet.drag;
+  if (!d) return;
+  d.dy = e.touches[0].clientY - d.y0;
+  if (!d.active) {
+    if (d.dy < -4) { sheet.drag = null; return; } // omhoog = gewoon scrollen
+    if (d.dy < 8) return;
+    d.active = true;
+    sheetEl.classList.add('dragging');
+  }
+  e.preventDefault();
+  const dy = Math.max(0, d.dy);
+  sheetEl.style.transform = `translateY(${dy}px)`;
+  sheetBackdrop.style.opacity = String(Math.max(0, 1 - dy / (sheetEl.offsetHeight || 1)));
+}, { passive: false });
+
+function endDrag() {
+  const d = sheet.drag;
+  sheet.drag = null;
+  if (!d || !d.active) return;
+  sheetEl.classList.remove('dragging');
+  const fast = d.dy > 30 && d.dy / Math.max(1, Date.now() - d.t0) > 0.5;
+  if (d.dy > Math.min(120, sheetEl.offsetHeight * 0.25) || fast) {
+    closeSheet();
+  } else {
+    sheetEl.style.transform = '';
+    sheetBackdrop.style.opacity = '';
+  }
+}
+sheetEl.addEventListener('touchend', endDrag);
+sheetEl.addEventListener('touchcancel', endDrag);
 
 // Tik op een boek in een lijst → bewerken
 document.addEventListener('click', (e) => {
@@ -809,10 +1339,11 @@ $('#book-form').addEventListener('submit', async (e) => {
 
   if (photoError) {
     toast('Boek opgeslagen, maar de foto niet: ' + photoError);
-  } else if (!b.id) {
-    toast(`Toegevoegd aan “${STATUS[status]}”`);
   } else {
-    toast('Opgeslagen');
+    // Valt het boek buiten de actieve filter van zijn lijst? Dan even melden.
+    const tab = tabForStatus(status);
+    const hidden = filtersActive(tab) && !applyFilters(tab, [saved]).length ? ' – valt buiten je filter' : '';
+    toast((!b.id ? `Toegevoegd aan “${STATUS[status]}”` : 'Opgeslagen') + hidden);
   }
   if (!b.id || b.status !== status) {
     if (status === 'gelezen' && finish) state.openYears.add(finish.slice(0, 4));

@@ -233,3 +233,60 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   max-width: calc(100vw - 32px); z-index: 20;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* Sorteren en filteren (fase 2c, B19/B20) */
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sort-btn {
+  position: relative; flex: none;
+  width: 40px; height: 40px; padding: 0; margin: 2px -6px 0 0;
+  border: none; background: none; color: var(--muted);
+  font-size: 1.25rem; line-height: 1;
+}
+.sort-btn.active { color: var(--accent); }
+.sort-dot {
+  position: absolute; top: 7px; right: 6px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--bg);
+}
+.filter-bar { margin: -6px 0 10px; color: var(--muted); font-size: .85rem; }
+.filter-bar button.link { color: var(--accent); font-size: inherit; padding: 2px 4px; }
+.empty .link { color: var(--accent); }
+
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 24;
+  background: rgba(0, 0, 0, .45); opacity: 0; transition: opacity .2s;
+}
+.sheet-backdrop.open { opacity: 1; }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: var(--kb, 0px); z-index: 25;
+  max-width: 640px; margin: 0 auto;
+  max-height: min(85dvh, calc(100dvh - var(--kb, 0px) - 12px));
+  display: flex; flex-direction: column;
+  background: var(--bg); color: var(--text);
+  border-radius: 16px 16px 0 0; box-shadow: 0 -4px 24px rgba(0, 0, 0, .2);
+  transform: translateY(105%); transition: transform .22s ease-out;
+  outline: none;
+}
+.sheet.open { transform: translateY(0); }
+.sheet.dragging { transition: none; }
+.sheet-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 8px auto 2px; flex: none; }
+.sheet-head { display: flex; align-items: baseline; gap: 8px; padding: 4px 16px 0; flex: none; }
+.sheet-head h2 { margin: 6px 0; font-size: 1.1rem; }
+.sheet-head .meta { margin: 0; }
+.sheet-body { overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 8px; flex: 1 1 auto; }
+.sheet-body h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 14px 0 6px; }
+.sheet-body label { margin-top: 10px; }
+.sheet-foot {
+  display: flex; gap: 8px; flex: none;
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+}
+.sheet-foot .primary { flex: 1; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { padding: 7px 12px; font-size: .9rem; border-radius: 99px; }
+.chips button[aria-checked="true"] {
+  background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600;
+}
+.chips + .chips { margin-top: 8px; }
+.chips.compact { flex-wrap: nowrap; gap: 4px; }
+.chips.compact button { flex: 1 1 auto; padding: 7px 4px; min-width: 0; white-space: nowrap; }
