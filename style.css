@@ -290,3 +290,9 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .chips + .chips { margin-top: 8px; }
 .chips.compact { flex-wrap: nowrap; gap: 4px; }
 .chips.compact button { flex: 1 1 auto; padding: 7px 4px; min-width: 0; white-space: nowrap; }
+
+/* Gelezen als één lijst (zonder jaargroepen) */
+.flat-summary {
+  margin: 0 0 8px; padding: 10px 4px; border-bottom: 1px solid var(--line);
+  color: var(--muted); font-size: .85rem; text-align: right;
+}

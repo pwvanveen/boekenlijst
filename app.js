@@ -367,7 +367,18 @@ function renderGelezen() {
   if (!all.length) html = '<p class="empty">Nog geen gelezen boeken. Zet een boek op “Gelezen” om het hier te zien.</p>';
   else if (!shown.length) html = noMatchHtml(list, 'p');
 
-  for (const y of years) {
+  // Indeling: per jaar (standaard) of één lijst zonder jaargroepen
+  const grouped = getView(list).sort.grouped !== false;
+  document.querySelector('.tab[data-tab="gelezen"] h2').textContent = grouped ? 'Gelezen per jaar' : 'Gelezen';
+
+  if (!grouped && read.length) {
+    const items = sortBooks(list, read);
+    const pages = items.reduce((s, b) => s + (b.pages || 0), 0);
+    html += `<p class="flat-summary">${items.length} ${items.length === 1 ? 'boek' : 'boeken'}${pages ? ` · ${pages.toLocaleString('nl-NL')} blz.` : ''}</p>
+      <ul class="booklist" id="gelezen-flat">${items.map((b) => bookLi(b, metaRead(b))).join('')}</ul>`;
+  }
+
+  for (const y of grouped ? years : []) {
     const items = sortBooks(list, groups.get(y));
     const pages = items.reduce((s, b) => s + (b.pages || 0), 0); // totalen van de gefilterde set
     const label = y === 'zonder' ? 'Zonder einddatum' : y;
@@ -457,9 +468,11 @@ function sortStorageKey(list) {
 function loadSort(list) {
   try {
     const v = JSON.parse(localStorage.getItem(sortStorageKey(list)) || 'null');
-    if (v && SORT_FIELDS.includes(v.field) && (v.dir === 'asc' || v.dir === 'desc')) return { field: v.field, dir: v.dir };
+    if (v && SORT_FIELDS.includes(v.field) && (v.dir === 'asc' || v.dir === 'desc')) {
+      return { field: v.field, dir: v.dir, grouped: v.grouped !== false };
+    }
   } catch (_) { /* standaard gebruiken */ }
-  return { ...DEFAULT_SORT };
+  return { ...DEFAULT_SORT, grouped: true }; // grouped: alleen gebruikt in Gelezen per jaar
 }
 
 function saveSort(list) {
@@ -683,6 +696,10 @@ function renderSheet() {
   let h = `<h3 id="sh-sort">Sorteren</h3>
     ${chipsHtml('sort-field', fields, 'sh-sort')}
     ${chipsHtml('sort-dir', dirs, 'sh-sort')}
+    ${list === 'gelezen' ? `<label id="sh-group">Indeling</label>${chipsHtml('grouping', [
+      ['jaar', 'Per jaar', v.sort.grouped !== false],
+      ['lijst', 'Eén lijst', v.sort.grouped === false]
+    ], 'sh-group')}` : ''}
     <h3>Filteren</h3>
     <label for="flt-text">Tekst</label>
     <input type="search" id="flt-text" value="${esc(f.text)}" placeholder="Zoek in titel of auteur"
@@ -798,7 +815,11 @@ $('#sheet-body').addEventListener('click', (e) => {
   const value = btn.dataset.value;
   if (btn.dataset.group === 'sort-field') {
     if (v.sort.field === value) return;
-    v.sort = { field: value, dir: SORT_NATURAL_DIR[value] };
+    v.sort = { ...v.sort, field: value, dir: SORT_NATURAL_DIR[value] };
+    saveSort(list);
+    render();
+  } else if (btn.dataset.group === 'grouping') {
+    v.sort.grouped = value === 'jaar';
     saveSort(list);
     render();
   } else if (btn.dataset.group === 'sort-dir') {
