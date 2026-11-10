@@ -3087,7 +3087,7 @@ function koboPrepare(rows) {
     k: i,
     existing: find(r),
     checked: r.finished,
-    status: r.finished ? 'gelezen' : koboRecent(r.lastRead) ? 'bezig' : 'gestopt',
+    status: r.finished ? 'gelezen' : r.percent === 0 ? 'wil_lezen' : koboRecent(r.lastRead) ? 'bezig' : 'gestopt',
     action: 'skip',   // dubbel boek: 'skip' (Overslaan) of 'fill' (Aanvullen)
     saved: null       // 'done' / 'failed'
   }));
@@ -3604,7 +3604,9 @@ async function koboUndo() {
    importscherm open is): voor elk toegevoegd of aangevuld boek met een geldig
    ISBN Google Books op isbn: (bestaande zoekroute), één aanvraag per ~300 ms.
    Alleen lege velden worden gevuld. Geen cover bij Google → Open Library-cover
-   op ISBN (bestaande route). Boeken zonder ISBN: niets (geen zoeken op titel).
+   op ISBN (bestaande route). Boeken zonder ISBN: zoeken op titel + auteur
+   (Google, intitle/inauthor); alleen een resultaat met dezelfde titel (begin),
+   dezelfde achternaam en dezelfde taal telt. Dat vult ook het ISBN (fase 3c).
    Elk boek wordt direct na het ophalen bewaard; stoppen of sluiten verliest
    dus niets. Google-fout → stoppen met melding, geen eindeloze herhaling. */
 
@@ -3629,8 +3631,39 @@ const enrichIsbn = (b) => koboIsbn(b.isbn);
 function koboEnrichCandidates() {
   const done = kobo.enrich?.done || new Map();
   return koboImportBooks()
-    .filter((b) => enrichIsbn(b) && ENRICH_FIELDS.some((f) => isEmpty(b[f])) && done.get(b.id) !== 'done')
+    .filter((b) => done.get(b.id) !== 'done'
+      && (enrichIsbn(b) ? ENRICH_FIELDS.some((f) => isEmpty(b[f])) : enrichTitleOk(b)))
     .map((b) => b.id);
+}
+
+// Zoeken op titel kan alleen met een titel én een auteur (anders te onzeker)
+const enrichLastName = (name) => koboNorm(name).split(' ').pop() || '';
+const enrichTitleOk = (b) => !!(koboNorm(b.title) && enrichLastName((b.authors || [])[0] || ''));
+
+// Google Books op titel + achternaam (fase 3c). Telt alleen als:
+// - de titel gelijk is, of de Google-titel begint met onze titel (ondertitel
+//   of ". Roman" erachter);
+// - een van de Google-auteurs dezelfde achternaam heeft;
+// - de taal gelijk is (als het boek een taal heeft): zo geen Engelse uitgave
+//   bij een Nederlands boek.
+// Voorkeur: met cover, dan met geldig ISBN. Gooit door bij een fout van Google.
+async function googleByTitle(b) {
+  const title = koboNorm(b.title);
+  const last = enrichLastName(b.authors[0]);
+  // In de zoekvraag de achternaam mét accenten (Google vindt "Marien" niet bij "Mariën")
+  const lastRaw = String(b.authors[0]).trim().split(/\s+/).pop();
+  const results = await searchGoogle(`intitle:${stripDruk(b.title)} inauthor:${lastRaw}`);
+  const lang = normalizeLang(b.language);
+  const hits = results.filter((r) => {
+    const t = koboNorm(r.title);
+    if (!(t === title || t.startsWith(title + ' '))) return false;
+    if (!(r.authors || []).some((a) => enrichLastName(a) === last)) return false;
+    return !lang || !r.language || normalizeLang(r.language) === lang;
+  });
+  return hits.find((r) => r.cover_url && koboIsbn(r.isbn))
+    || hits.find((r) => koboIsbn(r.isbn))
+    || hits.find((r) => r.cover_url)
+    || null;
 }
 
 // Google Books op ISBN; alleen een resultaat met hetzelfde ISBN telt
@@ -3660,7 +3693,7 @@ function koboEnrichStart() {
   const e = kobo.enrich || (kobo.enrich = {
     running: false, stopReq: false, loop: null, wake: null,
     done: new Map(),   // boek-id → 'done' (afgehandeld) of 'retry' (Open Library-limiet)
-    pos: 0, total: 0, covers: 0, pages: 0, ran: false,
+    pos: 0, total: 0, covers: 0, pages: 0, isbns: 0, ran: false,
     stopped: false, error: '', olLimited: false, lastGoogle: 0
   });
   if (e.running) return;
@@ -3703,8 +3736,9 @@ async function koboEnrichLoop(e, list) {
   for (const id of list) {
     if (!alive()) return;
     let b = state.books.find((x) => x.id === id);
-    const isbn = b && enrichIsbn(b);
-    if (!b || !isbn) { e.pos++; koboEnrichProgress(); continue; } // intussen verwijderd
+    let isbn = b && enrichIsbn(b);
+    const byTitle = !!b && !isbn && enrichTitleOk(b);
+    if (!b || (!isbn && !byTitle)) { e.pos++; koboEnrichProgress(); continue; } // intussen verwijderd
 
     const wait = e.lastGoogle + ENRICH_GAP_MS - Date.now();
     if (wait > 0) await enrichSleep(e, wait);
@@ -3713,7 +3747,7 @@ async function koboEnrichLoop(e, list) {
 
     let g;
     try {
-      g = await googleByIsbn(isbn);
+      g = byTitle ? await googleByTitle(b) : await googleByIsbn(isbn);
     } catch (err) {
       console.warn('Google Books (gegevens ophalen):', err);
       e.error = enrichErrorText(err);
@@ -3724,6 +3758,10 @@ async function koboEnrichLoop(e, list) {
 
     b = state.books.find((x) => x.id === id) || b; // actuele stand
     const fields = {};
+    if (g && byTitle && isEmpty(b.isbn) && koboIsbn(g.isbn)) {
+      fields.isbn = koboIsbn(g.isbn);
+      isbn = fields.isbn;
+    }
     if (g) {
       if (isEmpty(b.cover_url) && g.cover_url) fields.cover_url = g.cover_url;
       if (isEmpty(b.pages) && g.pages) fields.pages = g.pages;
@@ -3732,7 +3770,7 @@ async function koboEnrichLoop(e, list) {
       if (isEmpty(b.language) && g.language) fields.language = g.language;
     }
     let status = 'done';
-    if (isEmpty(b.cover_url) && !fields.cover_url) {
+    if (isEmpty(b.cover_url) && !fields.cover_url && isbn) {
       if (olCoverBudget()) {
         olCoverTimes.push(Date.now());
         const url = await probeOpenLibraryCover(isbn);
@@ -3762,6 +3800,7 @@ async function koboEnrichLoop(e, list) {
       }
       if (fields.cover_url) e.covers++;
       if (fields.pages) e.pages++;
+      if (fields.isbn) e.isbns++;
       render();
     }
     e.done.set(id, status);
@@ -3799,13 +3838,14 @@ function koboEnrichHtml() {
   let html = '<div class="kobo-enrich"><h3>Covers en gegevens</h3>';
   if (e?.ran) {
     html += `<p class="kobo-enrich-sum" role="status">${e.covers} ${e.covers === 1 ? 'cover' : 'covers'} gevonden · ${noCover.length} zonder cover</p>`;
+    if (e.isbns) html += `<p class="kobo-hint">ISBN gevonden via titel en auteur bij ${boeken(e.isbns)}.</p>`;
     if (e.pages) html += `<p class="kobo-hint">Bladzijdes aangevuld bij ${boeken(e.pages)}.</p>`;
     if (e.error) html += `<p class="msg error" role="alert">${esc(e.error)}</p>`;
     else if (e.stopped) html += '<p class="kobo-hint">Gestopt. Wat al is opgehaald, blijft bewaard.</p>';
     if (e.olLimited) html += '<p class="kobo-hint">Open Library heeft een limiet per 5 minuten; probeer het straks nog eens voor de overige covers.</p>';
   }
   if (noIsbn) {
-    html += `<p class="kobo-hint">${noIsbn === 1 ? '1 boek' : `${noIsbn} boeken`} zonder ISBN: cover aanvullen via bewerken of met een eigen foto.</p>`;
+    html += `<p class="kobo-hint">${noIsbn === 1 ? '1 boek' : `${noIsbn} boeken`} zonder ISBN${e?.ran ? ' (niet gevonden op titel en auteur)' : ''}: cover aanvullen via bewerken of met een eigen foto.</p>`;
   }
   if (left) {
     html += `<button type="button" class="kobo-wide" data-kobo="enrich">${icon('refresh', 18)}<span>Covers en gegevens ophalen</span></button>`;
