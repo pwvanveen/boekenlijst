@@ -194,9 +194,22 @@ function showStartError(text) {
   $('#btn-retry').addEventListener('click', () => location.reload());
 }
 
+// Gebruikersnaam (B42): in de user metadata van het Supabase-account, dus op elk toestel gelijk
+const USERNAME_MAX = 30;
+const userName = () => String(state.user?.user_metadata?.display_name ?? '').trim();
+function renderTitle() {
+  const n = userName();
+  const el = $('#app-title');
+  el.textContent = n ? `Bladwijzer van ${n}` : 'Bladwijzer';
+  el.title = n ? el.textContent : '';
+}
+// Kop bij het delen (tekst, deelmenu, PDF): "Boekentips" of "Boekentips van …"
+const shareHeading = () => (userName() ? `Boekentips van ${userName()}` : 'Boekentips');
+
 function setUser(user) {
   const changed = (user?.id ?? null) !== (state.user?.id ?? null);
   state.user = user;
+  renderTitle();
 
   $('#view-loading').hidden = true;
   $('#view-login').hidden = !!user;
@@ -301,6 +314,12 @@ function renderSettingsSheet() {
     <h3>Account</h3>
     <p class="set-account">Ingelogd als
       <span class="set-email" title="${esc(state.user?.email ?? '')}">${esc(state.user?.email ?? '')}</span></p>
+    <label class="set-label" for="set-name">Gebruikersnaam</label>
+    <div class="set-name-row">
+      <input id="set-name" type="text" maxlength="${USERNAME_MAX}" autocomplete="nickname" placeholder="Bijv. Paul" value="${esc(userName())}">
+      <button type="button" class="primary" data-settings="name" disabled>Opslaan</button>
+    </div>
+    <p class="set-hint">Verschijnt in de kopbalk ("Bladwijzer van …") en bij het delen ("Boekentips van …"). Leeg laten mag.</p>
     <h3 id="set-theme">Thema</h3>
     <div class="theme-seg" role="radiogroup" aria-labelledby="set-theme">${
       THEMES.map(([val, label, ic]) =>
@@ -322,6 +341,7 @@ async function onSettingsClick(e) {
     });
     return;
   }
+  if (e.target.closest('[data-settings="name"]')) { saveUserName(); return; }
   if (e.target.closest('[data-settings="import"]')) { koboOpen(); return; }
   if (e.target.closest('[data-settings="logout"]')) {
     const btn = e.target.closest('button');
@@ -332,6 +352,27 @@ async function onSettingsClick(e) {
     closeSheet();
     showTab('bezig');
   }
+}
+
+async function saveUserName() {
+  const input = $('#set-name');
+  const btn = $('#sheet-body [data-settings="name"]');
+  if (!input || !btn) return;
+  const v = input.value.trim().slice(0, USERNAME_MAX);
+  if (v === userName()) { input.value = v; btn.disabled = true; return; }
+  btn.disabled = true;
+  input.disabled = true;
+  const { data, error } = await sb.auth.updateUser({ data: { display_name: v || null } });
+  input.disabled = false;
+  if (error) {
+    btn.disabled = false;
+    toast('Opslaan mislukt: ' + error.message);
+    return;
+  }
+  if (data?.user) state.user = data.user;
+  renderTitle();
+  input.value = userName();
+  toast(v ? 'Gebruikersnaam opgeslagen' : 'Gebruikersnaam verwijderd');
 }
 
 /* ---------- Gegevens laden ---------- */
@@ -1017,12 +1058,18 @@ $('#sheet-body').addEventListener('change', (e) => {
 });
 
 $('#sheet-body').addEventListener('input', (e) => {
+  if (sheet.mode === 'settings' && e.target.id === 'set-name') {
+    const btn = $('#sheet-body [data-settings="name"]');
+    if (btn) btn.disabled = e.target.value.trim() === userName();
+    return;
+  }
   if (sheet.mode !== 'filter') return;
   if (e.target.id === 'flt-text' && sheet.open) setFilter(sheet.list, 'text', e.target.value);
 });
 
 $('#sheet-body').addEventListener('keydown', (e) => {
   if (e.target.id === 'flt-text' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+  if (e.target.id === 'set-name' && e.key === 'Enter') { e.preventDefault(); saveUserName(); }
 });
 
 // Schermtoetsenbord: paneel boven het toetsenbord houden
@@ -1564,7 +1611,7 @@ function noteLines(notes) {
 // Platte tekst voor het deelmenu en het klembord (B26)
 function shareText({ notes = shareOut.notes } = {}) {
   const { books, count } = shareContent();
-  const out = [`Boekenlijst – ${fmtLongDate(new Date())} (${boeken(count)})`, ''];
+  const out = [`${shareHeading()} – ${fmtLongDate(new Date())} (${boeken(count)})`, ''];
   books.forEach((b, i) => {
     if (i > 0) out.push(''); // lege regel tussen boeken: rustiger in berichten-apps
     const authors = authorsText(b.authors);
@@ -1839,7 +1886,7 @@ function shareViaApp() {
   }
   let p;
   try {
-    p = navigator.share({ title: 'Boekenlijst', text });
+    p = navigator.share({ title: shareHeading(), text });
   } catch (err) {
     copyText(text, 'Lijst gekopieerd – plak hem in een app naar keuze');
     return;
@@ -1916,7 +1963,7 @@ function buildPrint({ notes = shareOut.notes, covers = shareOut.covers } = {}) {
     </div>`;
   };
   // Eén doorlopende lijst in de schermvolgorde, label per boek (B35)
-  $('#print').innerHTML = `<h1>Boekenlijst</h1>
+  $('#print').innerHTML = `<h1>${esc(shareHeading())}</h1>
     <p class="p-sub">Samengesteld op ${esc(made)} · ${boeken(count)}</p>
     <section class="p-group">${books.map(book).join('')}</section>`;
 }
@@ -1987,7 +2034,7 @@ async function sharePrint() {
   $('#toast').classList.remove('show', 'has-action');
   // Standaard bestandsnaam bij "Opslaan als PDF"
   if (printTitle.saved === null) printTitle.saved = document.title;
-  document.title = `Boekenlijst ${fmtLongDate(new Date())}`;
+  document.title = `${shareHeading()} ${fmtLongDate(new Date())}`;
   document.body.classList.add('print-share');
   printTitle.armed = true;
   try {
