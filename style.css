@@ -489,6 +489,7 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
   .p-title { font-weight: 700; font-size: 11pt; }
   .p-authors { color: #333; }
   .p-meta { color: #444; font-size: 9.5pt; margin-top: .5mm; }
+  .p-label { color: #000; }
   .p-stars { letter-spacing: .5pt; color: #000; }
   .p-note {
     margin-top: 1.5mm; padding-left: 2.5mm; border-left: .75pt solid #999;
@@ -527,3 +528,30 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .ereader-row { margin-top: 12px; border-top: 1px solid var(--line); }
 .switch-label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .switch-label .i { color: var(--muted); flex: none; }
+
+/* =========================================================
+   Deellijst sorteren en slepen (fase 2j, B35)
+   ========================================================= */
+.share-order { color: var(--muted); }
+.share-tools {
+  flex: none; align-self: stretch; margin: -4px -4px -4px 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+}
+.share-tools .share-remove { margin: 0; }
+.share-grip {
+  flex: none; width: 40px; height: 40px; padding: 0; margin: 0;
+  display: grid; place-items: center;
+  border: none; background: none; color: var(--muted); border-radius: 50%;
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+.share-grip .i { display: block; }
+.share-grip:active { background: var(--line); }
+.share-list.drag-active { user-select: none; -webkit-user-select: none; }
+.share-list.drag-active .share-item:not(.dragging) { transition: transform .15s ease; }
+.share-item.dragging {
+  position: relative; z-index: 3; cursor: grabbing;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .22); border-color: var(--accent);
+}
+.share-item.dragging .share-grip { color: var(--accent); background: var(--line); }
+.share-sort-hint { margin-top: 12px; font-size: .85rem; }

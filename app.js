@@ -679,6 +679,7 @@ function applyFilters(list, books) {
 function sortValue(list, field, b) {
   switch (field) {
     case 'datum':
+      if (list === 'delen') return shareDate(b); // fase 2j: datum die bij het label hoort
       // Gestopte boeken hebben vaak geen einddatum: dan de startdatum
       if (list === 'gelezen' && b.status === 'gestopt') return b.date_finished || b.date_started;
       return b[LISTS[list].dateField];
@@ -893,6 +894,7 @@ function updateSheetSummary() {
   if (!sheet.open) return;
   if (sheet.mode === 'share') { updateShareSheet(); return; }
   if (sheet.mode === 'settings') return; // vaste inhoud, niets bij te werken
+  if (sheet.mode === 'sharesort') { updateShareSortSheet(); return; }
   const list = sheet.list;
   const total = baseBooks(list).length;
   const n = applyFilters(list, baseBooks(list)).length;
@@ -970,6 +972,7 @@ window.addEventListener('popstate', () => { if (sheet.open) closeSheet(true); })
 $('#sheet-body').addEventListener('click', (e) => {
   if (sheet.mode === 'share') { onShareSheetClick(e); return; }
   if (sheet.mode === 'settings') { onSettingsClick(e); return; }
+  if (sheet.mode === 'sharesort') { onShareSortClick(e); return; }
   const btn = e.target.closest('button[data-group]');
   if (!btn || !sheet.open) return;
   const list = sheet.list;
@@ -1107,7 +1110,10 @@ function loadShare() {
         created_at: typeof v.created_at === 'string' ? v.created_at : new Date().toISOString(),
         sources: Array.isArray(v.sources) ? v.sources.filter((x) => SHARE_SOURCES.includes(x)) : [],
         years: Array.isArray(v.years) ? v.years.map(String) : null,
-        book_ids: [...new Set(v.book_ids.map(String))]
+        book_ids: [...new Set(v.book_ids.map(String))],
+        // Volgorde (fase 2j, B35): { field, dir } of 'manual'. Ontbreekt bij een
+        // deellijst van vóór 2j: wordt bij het eerste tonen de standaardvolgorde.
+        sort: shareSortValid(v.sort) ? v.sort : null
       };
     }
   } catch (_) { /* geen of onleesbare deellijst: opnieuw beginnen */ }
@@ -1179,11 +1185,81 @@ function shareLabel(b) {
   }
 }
 
-// Boeken in de deellijst die nog bestaan (verwijderde boeken vallen stil weg)
+// Boeken in de deellijst die nog bestaan, in de volgorde van book_ids (B35);
+// verwijderde boeken vallen stil weg
 function shareBooks() {
   if (!share.saved) return [];
+  shareMigrate();
+  const byId = new Map(state.books.map((b) => [b.id, b]));
+  return share.saved.book_ids.map((id) => byId.get(id)).filter(Boolean);
+}
+
+/* ---------- Deellijst sorteren (fase 2j, B35) ----------
+   De volgorde van book_ids ís de volgorde. Een sortering kiezen herschikt
+   book_ids; slepen ook (sort = 'manual', "Eigen volgorde"). */
+
+const SHARE_SORT_FIELDS = ['bron', 'datum', 'titel', 'auteur', 'paginas', 'waardering'];
+const SHARE_SORT_LABEL = { bron: 'Bron', datum: 'Datum', titel: 'Titel', auteur: 'Auteur', paginas: "Pagina's", waardering: 'Waardering' };
+const SHARE_DEFAULT_SORT = { field: 'bron', dir: 'asc' };
+
+function shareSortValid(v) {
+  if (v === 'manual') return true;
+  return !!v && SHARE_SORT_FIELDS.includes(v.field) && (v.dir === 'asc' || v.dir === 'desc');
+}
+
+// Datum die bij het label hoort: start (Bezig), toegevoegd (Leeslijst), einde (Gelezen/Gestopt)
+function shareDate(b) {
+  switch (b.status) {
+    case 'bezig': return b.date_started;
+    case 'wil_lezen': return b.created_at ? String(b.created_at).slice(0, 10) : null;
+    case 'gestopt': return b.date_finished || b.date_started;
+    default: return b.date_finished;
+  }
+}
+
+// Boeken in de gekozen sortering (Bron = standaardvolgorde)
+function shareSorted(books, sort) {
+  if (sort.field === 'bron') return shareOrdered(books);
+  return sortBooks('delen', books, sort);
+}
+
+// book_ids herschikken volgens de boeken in hun nieuwe volgorde. Id's van boeken
+// die (nog) niet geladen zijn blijven achteraan staan, zodat er niets verdwijnt.
+function shareSetOrder(books, sort) {
+  const ids = books.map((b) => b.id);
+  const known = new Set(ids);
+  share.saved.book_ids = [...ids, ...share.saved.book_ids.filter((id) => !known.has(id))];
+  share.saved.sort = sort;
+}
+
+// Deellijst van vóór 2j (zonder sort): eenmalig in de standaardvolgorde zetten
+function shareMigrate() {
+  if (!share.saved || share.saved.sort || !state.booksLoaded) return;
   const ids = new Set(share.saved.book_ids);
-  return shareOrdered(state.books.filter((b) => ids.has(b.id)));
+  shareSetOrder(shareOrdered(state.books.filter((b) => ids.has(b.id))), { ...SHARE_DEFAULT_SORT });
+  saveShare();
+}
+
+function shareSortText(sort) {
+  if (!sort || sort === 'manual') return 'Eigen volgorde';
+  if (sort.field === 'bron') return 'Bron';
+  const dirs = SORT_DIR_LABEL[sort.field];
+  return `${SHARE_SORT_LABEL[sort.field]} · ${dirs[sort.dir]}`;
+}
+
+// Staat de deellijst (nog) precies in deze sortering?
+function shareOrderMatches(sort) {
+  if (!shareSortValid(sort) || sort === 'manual') return false;
+  const now = shareBooks();
+  const want = shareSorted(now, sort);
+  return now.every((b, i) => b.id === want[i].id);
+}
+
+function applyShareSort(sort) {
+  if (!share.saved) return;
+  shareSetOrder(shareSorted(shareBooks(), sort), sort);
+  saveShare();
+  renderShare();
 }
 
 function newShareDraft() {
@@ -1279,8 +1355,14 @@ function renderShareList(el) {
   const n = books.length;
   const made = fmtDate(share.saved.created_at.slice(0, 10)) || '';
 
-  el.innerHTML = `<h2>Deellijst · ${n} ${n === 1 ? 'boek' : 'boeken'}</h2>
-    <p class="share-sub">Samengesteld op ${esc(made)} · alleen op dit toestel</p>
+  const order = shareSortText(share.saved.sort);
+  el.innerHTML = `<div class="list-head">
+      <h2>Deellijst · ${n} ${n === 1 ? 'boek' : 'boeken'}</h2>
+      ${n > 1 ? `<button type="button" class="sort-btn" data-share-action="sort" data-focus="sort"
+          aria-label="Sorteren (nu: ${esc(order)})" title="Sorteren">${icon('adjustments-horizontal', 22)}</button>` : ''}
+    </div>
+    <p class="share-sub">Samengesteld op ${esc(made)} · alleen op dit toestel${n > 1
+      ? `<br><span class="share-order">Volgorde: ${esc(order)}</span>` : ''}</p>
     ${n ? `<button type="button" class="primary share-send" data-share-action="send" data-focus="send">${icon('share')}<span>Delen…</span></button>` : ''}
     ${n ? `<ul class="booklist share-list">${books.map((b) => `<li class="book share-item" data-share-id="${esc(b.id)}">
         ${coverHtml(b)}
@@ -1291,8 +1373,13 @@ function renderShareList(el) {
           ${b.notes ? `<p class="share-note${share.openNotes.has(b.id) ? ' open' : ''}" data-share-note="${esc(b.id)}"
                role="button" tabindex="0" aria-expanded="${share.openNotes.has(b.id)}">${esc(b.notes)}</p>` : ''}
         </div>
-        <button type="button" class="share-remove" data-share-remove="${esc(b.id)}" data-focus="rm-${esc(b.id)}"
-                aria-label="“${esc(b.title)}” uit de deellijst halen" title="Uit de deellijst halen">${icon('x')}</button>
+        <div class="share-tools">
+          <button type="button" class="share-remove" data-share-remove="${esc(b.id)}" data-focus="rm-${esc(b.id)}"
+                  aria-label="“${esc(b.title)}” uit de deellijst halen" title="Uit de deellijst halen">${icon('x')}</button>
+          ${n > 1 ? `<button type="button" class="share-grip" data-share-grip="${esc(b.id)}" data-focus="grip-${esc(b.id)}"
+                  aria-label="Verplaatsen" aria-description="Sleep, of gebruik de pijltjestoetsen omhoog en omlaag"
+                  title="Verplaatsen">${icon('grip-vertical')}</button>` : ''}
+        </div>
       </li>`).join('')}</ul>`
     : '<p class="empty">Je deellijst is leeg.</p>'}
     <div class="share-actions">
@@ -1318,9 +1405,14 @@ function shareMake() {
   if (!add.length) return;
   const choices = { sources: SHARE_SOURCES.filter((x) => d.sources.has(x)), years: d.years ? [...d.years] : null };
   if (adding) {
+    shareMigrate();
+    // Nieuwe boeken onderaan, in de standaardvolgorde (B35). Klopt de gekozen
+    // sortering daarna niet meer, dan is het voortaan "Eigen volgorde".
+    const prev = share.saved.sort;
     share.saved = { ...share.saved, ...choices, book_ids: [...share.saved.book_ids, ...add] };
+    share.saved.sort = shareOrderMatches(prev) ? prev : 'manual';
   } else {
-    share.saved = { created_at: new Date().toISOString(), ...choices, book_ids: add };
+    share.saved = { created_at: new Date().toISOString(), ...choices, book_ids: add, sort: { ...SHARE_DEFAULT_SORT } };
   }
   share.adding = false;
   share.draft = null;
@@ -1411,6 +1503,7 @@ $('#share').addEventListener('click', (e) => {
   else if (act === 'cancel-add') { share.adding = false; share.draft = null; renderShare(); }
   else if (act === 'reset') shareReset();
   else if (act === 'send') openShareSheet();
+  else if (act === 'sort') openShareSortSheet();
 });
 
 /* ---------- Delen als tekst, kopiëren, PDF / afdrukken (fase 2e, B24–B26) ----------
@@ -1431,17 +1524,11 @@ function fmtLongDate(d) {
   return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-// Deellijst als groepen: [{ label, books }], in de volgorde van shareBooks()
+// Deellijst in de schermvolgorde (fase 2j, B35): één lijst, geen groepskoppen;
+// elk boek draagt zijn eigen label
 function shareContent() {
-  const groups = [];
-  for (const b of shareBooks()) {
-    const label = shareLabel(b);
-    const last = groups[groups.length - 1];
-    if (last && last.label === label) last.books.push(b);
-    else groups.push({ label, books: [b] });
-  }
-  const count = groups.reduce((n, g) => n + g.books.length, 0);
-  return { groups, count };
+  const books = shareBooks();
+  return { books, count: books.length };
 }
 
 const boeken = (n) => `${n} ${n === 1 ? 'boek' : 'boeken'}`;
@@ -1454,18 +1541,15 @@ function noteLines(notes) {
 
 // Platte tekst voor het deelmenu en het klembord (B26)
 function shareText({ notes = shareOut.notes } = {}) {
-  const { groups, count } = shareContent();
-  const out = [`Boekenlijst – ${fmtLongDate(new Date())} (${boeken(count)})`];
-  for (const g of groups) {
-    out.push('', g.label);
-    for (const b of g.books) {
-      const authors = authorsText(b.authors);
-      const extra = [];
-      if (b.pages) extra.push(`${b.pages} blz.`);
-      if (b.rating) extra.push(stars(b.rating));
-      out.push(`• ${(b.title || '').trim() || 'Zonder titel'}${authors ? ` – ${authors}` : ''}${extra.length ? ` (${extra.join(', ')})` : ''}`);
-      if (notes) for (const l of noteLines(b.notes)) out.push(`  ${l}`);
-    }
+  const { books, count } = shareContent();
+  const out = [`Boekenlijst – ${fmtLongDate(new Date())} (${boeken(count)})`, ''];
+  for (const b of books) {
+    const authors = authorsText(b.authors);
+    const extra = [shareLabel(b)];
+    if (b.pages) extra.push(`${b.pages} blz.`);
+    if (b.rating) extra.push(stars(b.rating));
+    out.push(`• ${(b.title || '').trim() || 'Zonder titel'}${authors ? ` – ${authors}` : ''} (${extra.join(', ')})`);
+    if (notes) for (const l of noteLines(b.notes)) out.push(`  ${l}`);
   }
   return out.join('\n');
 }
@@ -1525,6 +1609,201 @@ function onShareSheetClick(e) {
   else if (act === 'copy') shareCopy();
   else if (act === 'print') sharePrint();
 }
+
+/* --- Deellijst sorteren: onderpaneel in mode 'sharesort' (fase 2j, B35) ---
+   Alleen het sorteerdeel, geen filters. Een keuze herschikt de deellijst direct;
+   het paneel blijft open, zodat je nog van richting kunt wisselen. */
+
+function openShareSortSheet() {
+  if (sheet.open || shareBooks().length < 2) return;
+  sheet.mode = 'sharesort';
+  sheet.list = null;
+  $('#sheet-title').textContent = 'Deellijst sorteren';
+  $('#sheet-clear').hidden = true;
+  sheet.open = true;
+  renderShareSortSheet();
+  showSheetPanel();
+}
+
+function renderShareSortSheet() {
+  const cur = share.saved?.sort;
+  const manual = !shareSortValid(cur) || cur === 'manual';
+  const fieldOf = manual ? null : cur.field;
+  const fields = SHARE_SORT_FIELDS.map((k) => [k, SHARE_SORT_LABEL[k], k === fieldOf]);
+  let h = `<h3 id="sh-share-sort">Sorteren</h3>${chipsHtml('share-sort-field', fields, 'sh-share-sort')}`;
+  if (fieldOf && fieldOf !== 'bron') {
+    const first = SORT_NATURAL_DIR[fieldOf];
+    const second = first === 'asc' ? 'desc' : 'asc';
+    h += chipsHtml('share-sort-dir', [first, second].map((d) => [d, SORT_DIR_LABEL[fieldOf][d], cur.dir === d]), 'sh-share-sort');
+  }
+  h += `<p class="meta share-sort-hint">${manual
+    ? 'Nu: eigen volgorde. Een sortering kiezen vervangt die.'
+    : fieldOf === 'bron'
+      ? 'Bron: Bezig, Leeslijst, Gelezen (nieuwste jaar eerst); binnen elke groep nieuwste eerst.'
+      : fieldOf === 'datum'
+        ? 'Datum: start bij Bezig, toegevoegd bij Leeslijst, einde bij Gelezen.'
+        : ''} Slepen kan met de greep rechts bij elk boek.</p>`;
+  $('#sheet-body').innerHTML = h;
+  updateShareSortSheet();
+}
+
+function updateShareSortSheet() {
+  const n = shareBooks().length;
+  if (n < 2) { closeSheet(); return; }
+  $('#sheet-sub').textContent = boeken(n);
+  $('#sheet-done').textContent = 'Klaar';
+}
+
+function onShareSortClick(e) {
+  const btn = e.target.closest('button[data-group]');
+  if (!btn || !sheet.open || !share.saved) return;
+  const cur = share.saved.sort;
+  const value = btn.dataset.value;
+  let next;
+  if (btn.dataset.group === 'share-sort-field') {
+    if (shareSortValid(cur) && cur !== 'manual' && cur.field === value) return;
+    next = { field: value, dir: value === 'bron' ? 'asc' : SORT_NATURAL_DIR[value] };
+  } else if (btn.dataset.group === 'share-sort-dir') {
+    if (!shareSortValid(cur) || cur === 'manual' || cur.dir === value) return;
+    next = { field: cur.field, dir: value };
+  } else return;
+  applyShareSort(next);
+  renderShareSortSheet();
+}
+
+/* --- Slepen met de greep (fase 2j, B35): eigen implementatie met Pointer Events ---
+   Alleen de greep start het slepen (touch-action: none op de greep); scrollen
+   over de rest van de lijst blijft gewoon werken. Het boek volgt de vinger,
+   de andere boeken schuiven opzij; bij de rand scrolt de pagina mee. */
+
+const SHARE_EDGE = 72;        // px vanaf de rand waarbinnen de lijst meescrolt
+const SHARE_SCROLL_MAX = 18;  // px per frame bij de rand
+
+const shareDrag = { d: null };
+
+function shareDragStart(e, grip) {
+  if (shareDrag.d || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  const li = grip.closest('li.share-item');
+  const ul = li?.parentElement;
+  if (!li || !ul) return;
+  e.preventDefault();
+  const items = [...ul.children];
+  const from = items.indexOf(li);
+  const sy = window.scrollY;
+  // Posities in paginacoördinaten (los van het scrollen tijdens het slepen)
+  const rects = items.map((el) => { const r = el.getBoundingClientRect(); return { top: r.top + sy, h: r.height }; });
+  const gap = items.length > 1 ? rects[1].top - (rects[0].top + rects[0].h) : 8;
+  shareDrag.d = {
+    li, ul, items, from, to: from, rects, gap,
+    pointerId: e.pointerId, y0: e.clientY + sy, y: e.clientY,
+    raf: 0, moved: false
+  };
+  try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+  li.classList.add('dragging');
+  ul.classList.add('drag-active');
+  try { navigator.vibrate?.(15); } catch (_) {}
+  shareDrag.d.raf = requestAnimationFrame(shareDragFrame);
+}
+
+function shareDragMove(e) {
+  const d = shareDrag.d;
+  if (!d || e.pointerId !== d.pointerId) return;
+  e.preventDefault();
+  d.y = e.clientY;
+  d.moved = true;
+}
+
+// Elk frame: rand-scroll, positie van het boek en van de andere boeken
+function shareDragFrame() {
+  const d = shareDrag.d;
+  if (!d) return;
+  const top = ($('.topbar')?.getBoundingClientRect().bottom || 0);
+  const bottom = ($('#tabbar') && !$('#tabbar').hidden ? $('#tabbar').getBoundingClientRect().top : window.innerHeight);
+  let step = 0;
+  if (d.y < top + SHARE_EDGE) step = -Math.ceil(SHARE_SCROLL_MAX * Math.min(1, (top + SHARE_EDGE - d.y) / SHARE_EDGE));
+  else if (d.y > bottom - SHARE_EDGE) step = Math.ceil(SHARE_SCROLL_MAX * Math.min(1, (d.y - (bottom - SHARE_EDGE)) / SHARE_EDGE));
+  if (step) window.scrollBy(0, step);
+
+  const sy = window.scrollY;
+  const dy = d.y + sy - d.y0;
+  // Niet boven het eerste of onder het laatste boek uit
+  const self = d.rects[d.from];
+  const minDy = d.rects[0].top - self.top;
+  const last = d.rects[d.rects.length - 1];
+  const maxDy = last.top + last.h - (self.top + self.h);
+  const cdy = Math.max(minDy, Math.min(maxDy, dy));
+  d.li.style.transform = `translateY(${cdy}px)`;
+
+  // Nieuwe plek. Boeken zijn niet even hoog (notities), dus: omhoog telt de
+  // bovenrand van het gesleepte boek, omlaag de onderrand, tegen het midden van de rest
+  const upper = self.top + cdy;
+  const lower = upper + self.h;
+  let to = d.from;
+  d.rects.forEach((r, i) => {
+    const m = r.top + r.h / 2;
+    if (i < d.from && upper < m) to--;
+    else if (i > d.from && lower > m) to++;
+  });
+  if (to !== d.to) {
+    d.to = to;
+    const shift = self.h + d.gap;
+    d.items.forEach((el, i) => {
+      if (i === d.from) return;
+      let t = 0;
+      if (d.from < i && i <= to) t = -shift;
+      else if (to <= i && i < d.from) t = shift;
+      el.style.transform = t ? `translateY(${t}px)` : '';
+    });
+  }
+  d.raf = requestAnimationFrame(shareDragFrame);
+}
+
+function shareDragEnd(e, cancel = false) {
+  const d = shareDrag.d;
+  if (!d || (e && e.pointerId !== d.pointerId)) return;
+  shareDrag.d = null;
+  cancelAnimationFrame(d.raf);
+  d.ul.classList.remove('drag-active');
+  d.li.classList.remove('dragging');
+  d.items.forEach((el) => { el.style.transform = ''; });
+  if (cancel || d.to === d.from) return;
+  shareMove(d.li.dataset.shareId, d.to);
+}
+
+// Boek naar plek "to" (index in de getoonde lijst) → eigen volgorde
+function shareMove(id, to) {
+  const books = shareBooks();
+  const from = books.findIndex((b) => b.id === id);
+  if (from < 0 || to === from || to < 0 || to >= books.length) return;
+  const [b] = books.splice(from, 1);
+  books.splice(to, 0, b);
+  shareSetOrder(books, 'manual');
+  saveShare();
+  renderShare();
+}
+
+$('#share').addEventListener('pointerdown', (e) => {
+  const grip = e.target.closest('[data-share-grip]');
+  if (grip) shareDragStart(e, grip);
+});
+$('#share').addEventListener('pointermove', shareDragMove, { passive: false });
+$('#share').addEventListener('pointerup', (e) => shareDragEnd(e));
+$('#share').addEventListener('pointercancel', (e) => shareDragEnd(e, true));
+$('#share').addEventListener('lostpointercapture', (e) => shareDragEnd(e));
+// Geen contextmenu/tekstselectie bij lang drukken op de greep
+$('#share').addEventListener('contextmenu', (e) => { if (e.target.closest('[data-share-grip]')) e.preventDefault(); });
+// Slepen stoppen als de app naar de achtergrond gaat of van tabblad wisselt
+document.addEventListener('visibilitychange', () => { if (document.hidden) shareDragEnd(null, true); });
+
+// Toetsenbord: pijltje omhoog/omlaag op de greep verplaatst één plek
+$('#share').addEventListener('keydown', (e) => {
+  const grip = e.target.closest?.('[data-share-grip]');
+  if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+  e.preventDefault();
+  const id = grip.dataset.shareGrip;
+  const idx = shareBooks().findIndex((b) => b.id === id);
+  shareMove(id, idx + (e.key === 'ArrowUp' ? -1 : 1));
+});
 
 /* --- Delen via app (Web Share API) en kopiëren --- */
 
@@ -1593,10 +1872,10 @@ function legacyCopy(text) {
 
 // Afdrukinhoud opbouwen in #print (alleen zichtbaar in @media print)
 function buildPrint({ notes = shareOut.notes, covers = shareOut.covers } = {}) {
-  const { groups, count } = shareContent();
+  const { books, count } = shareContent();
   const made = share.saved ? fmtLongDate(new Date(share.saved.created_at)) : fmtLongDate(new Date());
   const book = (b) => {
-    const meta = [];
+    const meta = [`<span class="p-label">${esc(shareLabel(b))}</span>`];
     if (b.pages) meta.push(`${b.pages} blz.`);
     if (b.rating) meta.push(`<span class="p-stars">${stars(b.rating)}</span>`);
     const lines = notes ? noteLines(b.notes) : [];
@@ -1608,19 +1887,15 @@ function buildPrint({ notes = shareOut.notes, covers = shareOut.covers } = {}) {
       <div class="p-info">
         <div class="p-title">${esc((b.title || '').trim() || 'Zonder titel')}</div>
         ${b.authors?.length ? `<div class="p-authors">${esc(authorsText(b.authors))}</div>` : ''}
-        ${meta.length ? `<div class="p-meta">${meta.join(' · ')}</div>` : ''}
+        <div class="p-meta">${meta.join(' · ')}</div>
         ${lines.length ? `<div class="p-note">${lines.map(esc).join('<br>')}</div>` : ''}
       </div>
     </div>`;
   };
-  // Groepskop + eerste boek samen, zodat een kop nooit los onderaan een pagina staat
-  const group = (g) => `<section class="p-group">
-      <div class="p-keep"><h2>${esc(g.label)}</h2>${book(g.books[0])}</div>
-      ${g.books.slice(1).map(book).join('')}
-    </section>`;
+  // Eén doorlopende lijst in de schermvolgorde, label per boek (B35)
   $('#print').innerHTML = `<h1>Boekenlijst</h1>
     <p class="p-sub">Samengesteld op ${esc(made)} · ${boeken(count)}</p>
-    ${groups.map(group).join('')}`;
+    <section class="p-group">${books.map(book).join('')}</section>`;
 }
 
 function printPlaceholder(b) {
