@@ -381,7 +381,12 @@ document.addEventListener('error', (e) => {
   img.replaceWith(ph.firstElementChild);
 }, true);
 
+// Klein e-reader-icoon vooraan in de metaregel (fase 2i, B34)
+const EREADER_MARK = `<span class="ereader-mark" role="img" aria-label="Op e-reader" title="Op e-reader">${icon('device-tablet', 16)}</span>`;
+
 function bookLi(b, metaHtml = '') {
+  // Alleen in Bezig, Leeslijst en Gelezen; de deellijst heeft een eigen opbouw
+  if (b.ereader) metaHtml = EREADER_MARK + metaHtml;
   return `<li class="book" data-id="${esc(b.id)}">
     ${coverHtml(b)}
     <div class="info">
@@ -567,7 +572,7 @@ const UNKNOWN_LANG = '?';
 const collator = new Intl.Collator('nl', { sensitivity: 'base' });
 
 function emptyFilters() {
-  return { text: '', author: '', rating: 0, lang: '', year: '' };
+  return { text: '', author: '', rating: 0, lang: '', year: '', ereader: '' }; // ereader: '' / 'ja' / 'nee'
 }
 
 function newViews() {
@@ -647,7 +652,7 @@ function langName(code) {
 
 function filtersActive(list) {
   const f = getView(list).filters;
-  return !!(f.text.trim() || f.author || f.rating || f.lang || f.year);
+  return !!(f.text.trim() || f.author || f.rating || f.lang || f.year || f.ereader);
 }
 
 // Alle filters combineren met EN
@@ -664,6 +669,9 @@ function applyFilters(list, books) {
     if (f.lang && (normalizeLang(b.language) || UNKNOWN_LANG) !== f.lang) return false;
     // Jaarfilter: alleen gelezen boeken uit dat jaar (Zonder einddatum en Gestopt vallen weg)
     if (f.year && !(b.status === 'gelezen' && (b.date_finished || '').slice(0, 4) === f.year)) return false;
+    // E-reader (B34): wel / niet gemarkeerd
+    if (f.ereader === 'ja' && !b.ereader) return false;
+    if (f.ereader === 'nee' && b.ereader) return false;
     return true;
   });
 }
@@ -737,6 +745,7 @@ function filterOptions(list, books) {
     .map((b) => b.date_finished.slice(0, 4)))];
   if (f.year && !years.includes(f.year)) years.push(f.year);
   years.sort((a, b) => b.localeCompare(a));
+  const ereaderKinds = new Set(books.map((b) => !!b.ereader));
   const otherGroups = books.some((b) => b.status === 'gestopt' || (b.status === 'gelezen' && !b.date_finished));
 
   const byName = (a, b) => collator.compare(a[1], b[1]);
@@ -750,7 +759,8 @@ function filterOptions(list, books) {
       author: authors.size >= 2 || !!f.author,
       rating: ratings.size >= 2 || !!f.rating,
       lang: langs.size >= 2 || !!f.lang,
-      year: list === 'gelezen' && (years.length >= 2 || (years.length === 1 && otherGroups) || !!f.year)
+      year: list === 'gelezen' && (years.length >= 2 || (years.length === 1 && otherGroups) || !!f.year),
+      ereader: ereaderKinds.size >= 2 || !!f.ereader // alleen als de lijst beide soorten bevat
     }
   };
 }
@@ -865,6 +875,12 @@ function renderSheet() {
       </select>`;
   }
 
+  if (opts.show.ereader) {
+    const e = [['', 'Alle'], ['ja', 'Op e-reader'], ['nee', 'Niet op e-reader']]
+      .map(([val, label]) => [val, label, f.ereader === val]);
+    h += `<label id="flt-ereader-label">E-reader</label>${chipsHtml('ereader', e, 'flt-ereader-label')}`;
+  }
+
   const body = $('#sheet-body');
   const scrollTop = body.scrollTop;
   body.innerHTML = h;
@@ -974,6 +990,8 @@ $('#sheet-body').addEventListener('click', (e) => {
     render();
   } else if (btn.dataset.group === 'rating') {
     setFilter(list, 'rating', Number(value));
+  } else if (btn.dataset.group === 'ereader') {
+    setFilter(list, 'ereader', value);
   }
   renderSheet();
 });
@@ -2022,6 +2040,7 @@ function openDialog(book) {
   $('#f-finish').value = book.date_finished || '';
   $('#f-rating').value = book.rating ? String(book.rating) : '';
   $('#f-notes').value = book.notes || '';
+  $('#f-ereader').checked = !!book.ereader;
   $('#dlg-delete').hidden = isNew;
   $('#dlg-save').disabled = false;
   // Nieuw boek: status kiezen met knoppen; bestaand boek: gewone keuzelijst (incl. Gestopt)
@@ -2079,7 +2098,8 @@ $('#book-form').addEventListener('submit', async (e) => {
     date_started: start,
     date_finished: finish,
     rating: parseInt($('#f-rating').value, 10) || null,
-    notes: $('#f-notes').value.trim() || null
+    notes: $('#f-notes').value.trim() || null,
+    ereader: $('#f-ereader').checked // fase 2i (B34); kolom moet bestaan in Supabase
   };
 
   // Open Library-cover die in het venster is gevonden meteen meenemen
@@ -2429,4 +2449,4 @@ window.addEventListener('pagehide', () => { if (scan.active) closeScanner(); });
 /* ---------- Start ---------- */
 
 showTab('bezig');
-initAuth();
+initAuth();

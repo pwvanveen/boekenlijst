@@ -520,3 +520,10 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
   color: var(--danger); border-color: var(--line); background: var(--card); font-weight: 600;
 }
 .set-version { margin: 18px 0 2px; text-align: center; color: var(--muted); font-size: .75rem; }
+
+/* E-reader-markering (fase 2i, B34) */
+.ereader-mark { display: inline-flex; vertical-align: -3px; margin-right: 6px; color: var(--muted); }
+.ereader-mark .i { width: 16px; height: 16px; }
+.ereader-row { margin-top: 12px; border-top: 1px solid var(--line); }
+.switch-label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.switch-label .i { color: var(--muted); flex: none; }

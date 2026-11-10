@@ -24,12 +24,12 @@
   <!-- Beginschermicoon en app-weergave (fase 2g, B31). Bewust GEEN
        apple-mobile-web-app-capable: op iPhone een gewone Safari-snelkoppeling,
        zodat inloggen via de maillink blijft werken. -->
-  <link rel="manifest" href="manifest.webmanifest?v=2h1">
-  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=2h1">
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2h1">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2h1">
+  <link rel="manifest" href="manifest.webmanifest?v=2i1">
+  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=2i1">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2i1">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2i1">
   <meta name="apple-mobile-web-app-title" content="Boekenlijst">
-  <link rel="stylesheet" href="style.css?v=2h1">
+  <link rel="stylesheet" href="style.css?v=2i1">
   <script>
     /* Foutmelding-vangnet: fouten en niet-geladen bestanden verschijnen op het
        scherm in plaats van een eindeloos "Laden…". Staat bewust inline en
@@ -71,8 +71,8 @@
   <!-- ?v=…: versienummer van deze levering. Bij elke nieuwe versie ophogen, zodat
        de browser geen oude style.css/app.js uit de cache combineert met een nieuwe pagina. -->
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="config.js?v=2h1"></script>
-  <script defer src="app.js?v=2h1"></script>
+  <script defer src="config.js?v=2i1"></script>
+  <script defer src="app.js?v=2i1"></script>
 </head>
 <body>
   <!-- Iconen (fase 2f, B29): Tabler Icons v3.51.0, outline — https://tabler.io/icons
@@ -100,6 +100,7 @@
     <symbol id="i-device-mobile" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2v-14"/><path d="M11 4h2"/><path d="M12 17v.01"/></symbol>
     <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008"/></symbol>
+    <symbol id="i-device-tablet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4a1 1 0 0 1 1 -1h12a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-12a1 1 0 0 1 -1 -1v-16"/><path d="M11 17a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/></symbol>
   </svg>
 
   <!-- Foutmelding-vangnet (opmaak inline: werkt ook als style.css niet laadt) -->
@@ -242,6 +243,15 @@
           <option value="gestopt">Gestopt</option>
         </select>
       </div>
+
+      <!-- Op e-reader (fase 2i, B34) -->
+      <label class="switch-row ereader-row" for="f-ereader">
+        <span class="switch-label">
+          <svg class="i" width="18" height="18" aria-hidden="true" focusable="false"><use href="#i-device-tablet"/></svg>
+          <span>Op e-reader</span>
+        </span>
+        <input type="checkbox" role="switch" class="switch" id="f-ereader">
+      </label>
 
       <div id="f-dates" class="row">
         <div>
