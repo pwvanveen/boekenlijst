@@ -1,7 +1,7 @@
 {
   "id": "/boekenlijst/",
-  "name": "Boekenlijst",
-  "short_name": "Boekenlijst",
+  "name": "Bladwijzer",
+  "short_name": "Bladwijzer",
   "description": "Je gelezen boeken en leeslijst",
   "lang": "nl",
   "dir": "ltr",

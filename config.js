@@ -1,4 +1,4 @@
-// Configuratie van de Boekenlijst.
+// Configuratie van Bladwijzer (repository: boekenlijst).
 // Deze sleutels zijn bewust openbaar (zie architectuurdocument, "Aandachtspunten"):
 // - Supabase: beveiliging via Row Level Security
 // - Google Books: sleutel beperkt tot de Books API en tot https://pwvanveen.github.io/*

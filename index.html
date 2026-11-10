@@ -20,16 +20,16 @@
       for (var i = 0; i < m.length; i++) m[i].setAttribute('content', c);
     })();
   </script>
-  <title>Boekenlijst</title>
+  <title>Bladwijzer</title>
   <!-- Beginschermicoon en app-weergave (fase 2g, B31). Bewust GEEN
        apple-mobile-web-app-capable: op iPhone een gewone Safari-snelkoppeling,
        zodat inloggen via de maillink blijft werken. -->
-  <link rel="manifest" href="manifest.webmanifest?v=3b2">
-  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=3b2">
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=3b2">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=3b2">
-  <meta name="apple-mobile-web-app-title" content="Boekenlijst">
-  <link rel="stylesheet" href="style.css?v=3b2">
+  <link rel="manifest" href="manifest.webmanifest?v=3b3">
+  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=3b3">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=3b3">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=3b3">
+  <meta name="apple-mobile-web-app-title" content="Bladwijzer">
+  <link rel="stylesheet" href="style.css?v=3b3">
   <script>
     /* Foutmelding-vangnet: fouten en niet-geladen bestanden verschijnen op het
        scherm in plaats van een eindeloos "Laden…". Staat bewust inline en
@@ -71,8 +71,8 @@
   <!-- ?v=…: versienummer van deze levering. Bij elke nieuwe versie ophogen, zodat
        de browser geen oude style.css/app.js uit de cache combineert met een nieuwe pagina. -->
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="config.js?v=3b2"></script>
-  <script defer src="app.js?v=3b2"></script>
+  <script defer src="config.js?v=3b3"></script>
+  <script defer src="app.js?v=3b3"></script>
 </head>
 <body>
   <!-- Iconen (fase 2f, B29): Tabler Icons v3.51.0, outline — https://tabler.io/icons
@@ -119,7 +119,7 @@
   </div>
 
   <header class="topbar">
-    <h1>Boekenlijst</h1>
+    <h1>Bladwijzer</h1>
     <div class="topbar-right">
       <button id="btn-settings" class="icon-btn" type="button" aria-label="Instellingen" title="Instellingen" hidden><svg class="i" width="24" height="24" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg></button>
     </div>

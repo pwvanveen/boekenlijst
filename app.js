@@ -1,7 +1,7 @@
 'use strict';
 
 /* =========================================================
-   Boekenlijst – fase 1 (MVP) + 2a (barcode scannen) + 2b (covers)
+   Bladwijzer (repository: boekenlijst) – fase 1 (MVP) + 2a (barcode scannen) + 2b (covers)
    + 2c (sorteren en filteren) + 2d (tabblad Delen)
    + 2e (delen als tekst, kopiëren, PDF / afdrukken)
    + 2f (naamgeving en iconen, B28/B29) + 2h (instellingen en thema, B32/B33)
