@@ -1510,7 +1510,7 @@ $('#share').addEventListener('click', (e) => {
     if (y === 'gestopt') {
       d.stopped = !d.stopped;               // los van de jaren aan/uit
     } else if (y === 'alle') {
-      d.years = null;                       // Alle jaren (standaard)
+      d.years = d.years ? null : new Set(); // Alle jaren aan/uit (uit = geen jaren, bijv. alleen Gestopt)
     } else {
       if (!d.years) d.years = new Set();    // van "Alle" naar losse jaren
       if (d.years.has(y)) d.years.delete(y); else d.years.add(y);
