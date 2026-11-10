@@ -651,3 +651,12 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
 .kobo-done-actions { display: grid; gap: 8px; margin-top: 20px; }
 .kobo-done-actions button { width: 100%; }
 .kobo-wide { margin-top: 4px; }
+
+/* Covers en gegevens ophalen na de import (fase 3b, B40) */
+.kobo-enrich { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.kobo-enrich h3 { margin: 0 0 4px; font-size: 1rem; }
+.kobo-enrich .kobo-progress-text { margin: 4px 0 8px; }
+.kobo-enrich-sum { margin: 0; font-weight: 600; }
+.kobo-enrich .msg.error { margin: 8px 0 0; }
+.kobo-enrich .kobo-wide { margin-top: 10px; }
+.kobo-enrich .kobo-wide .i { flex: none; }

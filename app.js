@@ -2015,7 +2015,9 @@ async function searchGoogle(q) {
   if (!r.ok) {
     let reason = '';
     try { reason = (await r.json())?.error?.message || ''; } catch (_) {}
-    throw new Error(`Google Books gaf status ${r.status}${reason ? ': ' + reason : ''}`);
+    const err = new Error(`Google Books gaf status ${r.status}${reason ? ': ' + reason : ''}`);
+    err.status = r.status; // fase 3b: 403/429 = limiet → stoppen
+    throw err;
   }
   const j = await r.json();
   return (j.items || []).map((it) => {
@@ -2793,7 +2795,8 @@ const kobo = {
   progress: null,   // { done, total }
   result: null,     // { addedIds, filled, failed, lastError }
   undone: false,
-  undoing: false
+  undoing: false,
+  enrich: null      // covers en gegevens ophalen (fase 3b), zie koboEnrichStart
 };
 
 /* --- CSV lezen --- */
@@ -3087,7 +3090,7 @@ function koboOpen() {
   if (kobo.active || !state.user) return;
   Object.assign(kobo, {
     active: true, step: 1, depth: 0, ignorePop: 0, fileName: '', error: '', rows: [], info: null,
-    saving: false, progress: null, result: null, undone: false, undoing: false
+    saving: false, progress: null, result: null, undone: false, undoing: false, enrich: null
   });
   // Komt uit Instellingen: het history-item van het onderpaneel overnemen,
   // anders zou history.back() van het paneel ons eigen item weghalen.
@@ -3112,6 +3115,7 @@ function koboOpen() {
 // er al één weggehaald (depth is dan al verlaagd).
 function koboClose() {
   if (!kobo.active) return;
+  koboEnrichStop(); // scherm sluiten = ophalen stoppen (B40)
   kobo.active = false;
   $('#kobo').hidden = true;
   $('#kobo-body').innerHTML = '';
@@ -3343,7 +3347,7 @@ function koboStep3Html() {
       html += `<p class="msg error" role="alert">${failed} niet gelukt${res.lastError ? `: ${esc(res.lastError)}` : ''}. Wat wel gelukt is, blijft bewaard.</p>
         <button type="button" class="kobo-wide" data-kobo="retry">Opnieuw proberen</button>`;
     }
-    if (added) html += '<p class="kobo-hint">Covers en aantallen bladzijdes ontbreken nog; die kun je per boek aanvullen via bewerken.</p>';
+    html += koboEnrichHtml();
   }
   html += `<div class="kobo-done-actions">
       <button type="button" class="primary" data-kobo="done">Klaar</button>
@@ -3362,6 +3366,8 @@ $('#kobo-body').addEventListener('click', (e) => {
   if (act === 'retry') { koboSave(); return; }
   if (act === 'undo') { koboUndo(); return; }
   if (act === 'done') { koboDone(); return; }
+  if (act === 'enrich') { koboEnrichStart(); return; }
+  if (act === 'enrich-stop') { koboEnrichStop(); return; }
 
   const quick = e.target.closest('[data-kobo-quick]')?.dataset.koboQuick;
   if (quick) {
@@ -3418,6 +3424,8 @@ function koboCopyQuery() {
 
 async function koboSave() {
   if (kobo.saving) return;
+  await koboEnrichStop(true); // Opnieuw proberen tijdens het ophalen
+  if (kobo.saving || !kobo.active) return;
   const jobs = koboChosen().filter((r) => r.saved !== 'done');
   if (!jobs.length && !kobo.result) return;
   if (kobo.step === 2) history.replaceState({ kobo: 3 }, ''); // terug vanuit 3 = sluiten
@@ -3492,6 +3500,7 @@ async function koboSave() {
   kobo.saving = false;
   render();
   if (kobo.active) koboRender();
+  koboEnrichStart(); // direct covers en gegevens ophalen (fase 3b, B40)
 }
 
 function koboDone() {
@@ -3511,6 +3520,8 @@ async function koboUndo() {
   if (!confirm(`De ${boeken(ids.length)} die je net hebt toegevoegd weer verwijderen?`
     + (kobo.result.filled ? ' Aangevulde boeken blijven zoals ze nu zijn.' : ''))) return;
   kobo.undoing = true;
+  koboRender();
+  await koboEnrichStop(true); // niet meer bijwerken wat we gaan verwijderen
   koboRender();
   const removed = [];
   let error = null;
@@ -3540,6 +3551,221 @@ async function koboUndo() {
   render();
   if (kobo.active) koboRender();
 }
+
+/* --- Covers en gegevens ophalen (fase 3b, B40) ---
+   Na het opslaan (en via de knop "Covers en gegevens ophalen" zolang het
+   importscherm open is): voor elk toegevoegd of aangevuld boek met een geldig
+   ISBN Google Books op isbn: (bestaande zoekroute), één aanvraag per ~300 ms.
+   Alleen lege velden worden gevuld. Geen cover bij Google → Open Library-cover
+   op ISBN (bestaande route). Boeken zonder ISBN: niets (geen zoeken op titel).
+   Elk boek wordt direct na het ophalen bewaard; stoppen of sluiten verliest
+   dus niets. Google-fout → stoppen met melding, geen eindeloze herhaling. */
+
+const ENRICH_GAP_MS = 300;                  // tussen twee Google-aanvragen (B40)
+const ENRICH_FIELDS = ['cover_url', 'pages', 'publisher', 'published_year', 'language'];
+const OL_COVER_LIMIT = 90;                  // Open Library: ca. 100 per 5 minuten
+const OL_COVER_WINDOW_MS = 5 * 60 * 1000;
+const olCoverTimes = [];                    // tijdstippen van Open Library-aanvragen
+
+const isEmpty = (v) => v === null || v === undefined || v === '';
+
+// Boeken van deze import: toegevoegd + aangevuld (in de huidige stand)
+function koboImportBooks() {
+  const ids = new Set(kobo.result?.addedIds || []);
+  for (const r of kobo.rows) if (r.existing && r.saved === 'done') ids.add(r.existing.id);
+  return state.books.filter((b) => ids.has(b.id));
+}
+
+// Geldig ISBN-13 van een boek (ISBN-10 omgezet), anders null
+const enrichIsbn = (b) => koboIsbn(b.isbn);
+
+function koboEnrichCandidates() {
+  const done = kobo.enrich?.done || new Map();
+  return koboImportBooks()
+    .filter((b) => enrichIsbn(b) && ENRICH_FIELDS.some((f) => isEmpty(b[f])) && done.get(b.id) !== 'done')
+    .map((b) => b.id);
+}
+
+// Google Books op ISBN; alleen een resultaat met hetzelfde ISBN telt
+// (geen foute koppelingen). Gooit door bij een fout van Google.
+async function googleByIsbn(isbn) {
+  const results = await searchGoogle(isbn);
+  return results.find((r) => r.isbn && koboIsbn(r.isbn) === isbn) || null;
+}
+
+function olCoverBudget() {
+  const now = Date.now();
+  while (olCoverTimes.length && now - olCoverTimes[0] > OL_COVER_WINDOW_MS) olCoverTimes.shift();
+  return olCoverTimes.length < OL_COVER_LIMIT;
+}
+
+function enrichErrorText(err) {
+  const st = err?.status;
+  const msg = String(err?.message || err || '');
+  if (st === 403 || st === 429 || /quota|rate ?limit|limit exceeded/i.test(msg)) {
+    return 'Google Books weigert op dit moment meer aanvragen (limiet bereikt). Later opnieuw proberen.';
+  }
+  return `Google Books gaf een fout (${msg || 'geen verbinding'}). Later opnieuw proberen.`;
+}
+
+function koboEnrichStart() {
+  if (!kobo.active || kobo.saving || kobo.undoing || kobo.undone || !kobo.result) return;
+  const e = kobo.enrich || (kobo.enrich = {
+    running: false, stopReq: false, loop: null, wake: null,
+    done: new Map(),   // boek-id → 'done' (afgehandeld) of 'retry' (Open Library-limiet)
+    pos: 0, total: 0, covers: 0, pages: 0, ran: false,
+    stopped: false, error: '', olLimited: false, lastGoogle: 0
+  });
+  if (e.running) return;
+  const list = koboEnrichCandidates();
+  Object.assign(e, { stopReq: false, stopped: false, error: '', olLimited: false, pos: 0, total: list.length });
+  if (!list.length) { e.ran = true; koboRender(); return; }
+  e.running = true;
+  koboRender();
+  e.loop = koboEnrichLoop(e, list).catch((err) => {
+    console.error('Gegevens ophalen mislukt:', err);
+    e.error = 'Er ging iets mis: ' + (err?.message || err) + '. Later opnieuw proberen.';
+  }).finally(() => {
+    e.running = false;
+    e.ran = true;
+    e.wake = null;
+    if (e.stopReq && !e.error) e.stopped = true;
+    if (kobo.active && kobo.enrich === e && !kobo.undoing) koboRender();
+  });
+}
+
+// Stoppen. wait = wachten tot de lus echt klaar is (vóór ongedaan maken/opnieuw opslaan)
+function koboEnrichStop(wait = false) {
+  const e = kobo.enrich;
+  if (!e?.running) return Promise.resolve();
+  e.stopReq = true;
+  e.wake?.();
+  return wait ? e.loop : Promise.resolve();
+}
+
+// Wachten dat door Stoppen kan worden onderbroken
+function enrichSleep(e, ms) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => { e.wake = null; resolve(); }, ms);
+    e.wake = () => { clearTimeout(t); e.wake = null; resolve(); };
+  });
+}
+
+async function koboEnrichLoop(e, list) {
+  const alive = () => !e.stopReq && kobo.active && kobo.enrich === e;
+  for (const id of list) {
+    if (!alive()) return;
+    let b = state.books.find((x) => x.id === id);
+    const isbn = b && enrichIsbn(b);
+    if (!b || !isbn) { e.pos++; koboEnrichProgress(); continue; } // intussen verwijderd
+
+    const wait = e.lastGoogle + ENRICH_GAP_MS - Date.now();
+    if (wait > 0) await enrichSleep(e, wait);
+    if (!alive()) return;
+    e.lastGoogle = Date.now();
+
+    let g;
+    try {
+      g = await googleByIsbn(isbn);
+    } catch (err) {
+      console.warn('Google Books (gegevens ophalen):', err);
+      e.error = enrichErrorText(err);
+      e.stopReq = true;
+      return;
+    }
+    if (!alive()) return;
+
+    b = state.books.find((x) => x.id === id) || b; // actuele stand
+    const fields = {};
+    if (g) {
+      if (isEmpty(b.cover_url) && g.cover_url) fields.cover_url = g.cover_url;
+      if (isEmpty(b.pages) && g.pages) fields.pages = g.pages;
+      if (isEmpty(b.publisher) && g.publisher) fields.publisher = g.publisher;
+      if (isEmpty(b.published_year) && g.published_year) fields.published_year = g.published_year;
+      if (isEmpty(b.language) && g.language) fields.language = g.language;
+    }
+    let status = 'done';
+    if (isEmpty(b.cover_url) && !fields.cover_url) {
+      if (olCoverBudget()) {
+        olCoverTimes.push(Date.now());
+        const url = await probeOpenLibraryCover(isbn);
+        if (!alive()) return;
+        if (url) fields.cover_url = url;
+      } else {
+        status = 'retry';           // later nog eens Open Library proberen
+        e.olLimited = true;
+      }
+    }
+
+    if (Object.keys(fields).length) {
+      try {
+        const { data, error } = await sb.from('books')
+          .update({ ...fields, updated_at: new Date().toISOString() })
+          .eq('id', id).select().single();
+        if (error) throw error;
+        const idx = state.books.findIndex((x) => x.id === id);
+        if (idx >= 0) state.books[idx] = data;
+        const r = kobo.rows.find((x) => x.existing?.id === id);
+        if (r) r.existing = data;
+      } catch (err) {
+        console.error('Gegevens bewaren mislukt:', err);
+        e.error = `Bewaren mislukt (${err?.message || err}). Wat al is opgehaald, blijft bewaard. Later opnieuw proberen.`;
+        e.stopReq = true;
+        return;
+      }
+      if (fields.cover_url) e.covers++;
+      if (fields.pages) e.pages++;
+      render();
+    }
+    e.done.set(id, status);
+    e.pos++;
+    koboEnrichProgress();
+  }
+}
+
+function koboEnrichProgress() {
+  const e = kobo.enrich;
+  if (!e || !kobo.active) return;
+  const txt = $('#kobo-enrich-text');
+  if (txt) txt.textContent = `Gegevens ophalen ${e.pos}/${e.total}`;
+  const bar = $('#kobo-enrich-bar');
+  if (bar) bar.value = e.pos;
+}
+
+function koboEnrichHtml() {
+  const e = kobo.enrich;
+  const books = koboImportBooks();
+  if (!books.length) return '';
+  if (e?.running) {
+    return `<div class="kobo-enrich">
+      <h3>Covers en gegevens</h3>
+      <p class="kobo-progress-text" id="kobo-enrich-text" role="status">Gegevens ophalen ${e.pos}/${e.total}</p>
+      <progress class="kobo-progress" id="kobo-enrich-bar" max="${e.total || 1}" value="${e.pos}"></progress>
+      <button type="button" class="kobo-wide" data-kobo="enrich-stop" ${e.stopReq ? 'disabled' : ''}>${icon('player-stop', 18)}<span>Stoppen</span></button>
+      <p class="kobo-hint">Wat al is opgehaald, wordt direct bewaard.</p>
+    </div>`;
+  }
+  if (kobo.undoing) return '';
+  const noCover = books.filter((b) => isEmpty(b.cover_url));
+  const noIsbn = noCover.filter((b) => !enrichIsbn(b)).length;
+  const left = koboEnrichCandidates().length;
+  let html = '<div class="kobo-enrich"><h3>Covers en gegevens</h3>';
+  if (e?.ran) {
+    html += `<p class="kobo-enrich-sum" role="status">${e.covers} ${e.covers === 1 ? 'cover' : 'covers'} gevonden · ${noCover.length} zonder cover</p>`;
+    if (e.pages) html += `<p class="kobo-hint">Bladzijdes aangevuld bij ${boeken(e.pages)}.</p>`;
+    if (e.error) html += `<p class="msg error" role="alert">${esc(e.error)}</p>`;
+    else if (e.stopped) html += '<p class="kobo-hint">Gestopt. Wat al is opgehaald, blijft bewaard.</p>';
+    if (e.olLimited) html += '<p class="kobo-hint">Open Library heeft een limiet per 5 minuten; probeer het straks nog eens voor de overige covers.</p>';
+  }
+  if (noIsbn) {
+    html += `<p class="kobo-hint">${noIsbn === 1 ? '1 boek' : `${noIsbn} boeken`} zonder ISBN: cover aanvullen via bewerken of met een eigen foto.</p>`;
+  }
+  if (left) {
+    html += `<button type="button" class="kobo-wide" data-kobo="enrich">${icon('refresh', 18)}<span>Covers en gegevens ophalen</span></button>`;
+  }
+  return html + '</div>';
+}
+
 
 /* ---------- Start ---------- */
 

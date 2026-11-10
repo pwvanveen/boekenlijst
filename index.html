@@ -24,12 +24,12 @@
   <!-- Beginschermicoon en app-weergave (fase 2g, B31). Bewust GEEN
        apple-mobile-web-app-capable: op iPhone een gewone Safari-snelkoppeling,
        zodat inloggen via de maillink blijft werken. -->
-  <link rel="manifest" href="manifest.webmanifest?v=3a2">
-  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=3a2">
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=3a2">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=3a2">
+  <link rel="manifest" href="manifest.webmanifest?v=3b1">
+  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=3b1">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=3b1">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=3b1">
   <meta name="apple-mobile-web-app-title" content="Boekenlijst">
-  <link rel="stylesheet" href="style.css?v=3a2">
+  <link rel="stylesheet" href="style.css?v=3b1">
   <script>
     /* Foutmelding-vangnet: fouten en niet-geladen bestanden verschijnen op het
        scherm in plaats van een eindeloos "Laden…". Staat bewust inline en
@@ -71,8 +71,8 @@
   <!-- ?v=…: versienummer van deze levering. Bij elke nieuwe versie ophogen, zodat
        de browser geen oude style.css/app.js uit de cache combineert met een nieuwe pagina. -->
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="config.js?v=3a2"></script>
-  <script defer src="app.js?v=3a2"></script>
+  <script defer src="config.js?v=3b1"></script>
+  <script defer src="app.js?v=3b1"></script>
 </head>
 <body>
   <!-- Iconen (fase 2f, B29): Tabler Icons v3.51.0, outline — https://tabler.io/icons
@@ -105,6 +105,7 @@
     <symbol id="i-file-import" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 13v-8a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2h-5.5m-9.5 -2h7m-3 -3l3 3l-3 3"/></symbol>
     <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l14 0"/><path d="M5 12l6 6"/><path d="M5 12l6 -6"/></symbol>
     <symbol id="i-player-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -10"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"/></symbol>
   </svg>
 
   <!-- Foutmelding-vangnet (opmaak inline: werkt ook als style.css niet laadt) -->
