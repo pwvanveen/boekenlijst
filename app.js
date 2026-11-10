@@ -1121,6 +1121,7 @@ function loadShare() {
         created_at: typeof v.created_at === 'string' ? v.created_at : new Date().toISOString(),
         sources: Array.isArray(v.sources) ? v.sources.filter((x) => SHARE_SOURCES.includes(x)) : [],
         years: Array.isArray(v.years) ? v.years.map(String) : null,
+        stopped: v.stopped === true,   // Gestopt meegenomen (optie onder Gelezen)
         book_ids: [...new Set(v.book_ids.map(String))],
         // Volgorde (fase 2j, B35): { field, dir } of 'manual'. Ontbreekt bij een
         // deellijst van vóór 2j: wordt bij het eerste tonen de standaardvolgorde.
@@ -1156,14 +1157,21 @@ function shareSourceCount(src) {
   return state.books.filter((b) => b.status === src).length; // Gelezen zonder Gestopt
 }
 
+// Gestopte boeken kunnen mee via de optie "Gestopt" onder Gelezen
+const shareStoppedCount = () => state.books.filter((b) => b.status === 'gestopt').length;
+const shareSourceAvailable = (src) =>
+  shareSourceCount(src) > 0 || (src === 'gelezen' && shareStoppedCount() > 0);
+
 // Boeken die bij de keuzes in stap 1 horen
 function shareChoiceInvalid(draft) {
-  return !draft.sources.size || (draft.sources.has('gelezen') && !!draft.years && !draft.years.size);
+  return !draft.sources.size ||
+    (draft.sources.has('gelezen') && !!draft.years && !draft.years.size && !draft.stopped);
 }
 
 function shareCandidates(draft) {
   if (shareChoiceInvalid(draft)) return [];
   return state.books.filter((b) => {
+    if (b.status === 'gestopt') return draft.sources.has('gelezen') && !!draft.stopped;
     if (!draft.sources.has(b.status)) return false;
     if (b.status !== 'gelezen') return true;
     return !draft.years || draft.years.has(shareYear(b));
@@ -1274,17 +1282,17 @@ function applyShareSort(sort) {
 }
 
 function newShareDraft() {
-  const counts = Object.fromEntries(SHARE_SOURCES.map((x) => [x, shareSourceCount(x)]));
-  if (!share.adding || !share.saved) return { sources: new Set(), years: null };
+  if (!share.adding || !share.saved) return { sources: new Set(), years: null, stopped: false };
   // Aanvullen: eerdere keuzes, voor zover er nog iets te kiezen valt
   const { years: avail, zonder } = shareYearOptions();
-  const sources = new Set(share.saved.sources.filter((x) => counts[x] > 0));
+  const sources = new Set(share.saved.sources.filter((x) => shareSourceAvailable(x)));
+  const stopped = !!share.saved.stopped && shareStoppedCount() > 0;
   let years = null;
   if (share.saved.years) {
     years = new Set(share.saved.years.filter((y) => (y === 'zonder' ? zonder : avail.includes(y))));
-    if (!years.size) years = null;
+    if (!years.size && !(stopped && !share.saved.years.length)) years = null; // alleen Gestopt gekozen: zo laten
   }
-  return { sources, years };
+  return { sources, years, stopped };
 }
 
 function renderShare() {
@@ -1311,7 +1319,7 @@ function renderShareChoose(el) {
 
   const sourceRows = SHARE_SOURCES.map((src) => {
     const n = shareSourceCount(src);
-    const off = n === 0;
+    const off = !shareSourceAvailable(src);
     if (off) d.sources.delete(src);
     return `<label class="share-source${off ? ' disabled' : ''}">
       <input type="checkbox" data-share-source="${src}" data-focus="src-${src}" ${d.sources.has(src) ? 'checked' : ''} ${off ? 'disabled' : ''}>
@@ -1330,6 +1338,7 @@ function renderShareChoose(el) {
         ${chip('alle', 'Alle jaren', !d.years)}
         ${years.map((y) => chip(y, y, !!d.years?.has(y))).join('')}
         ${zonder ? chip('zonder', 'Zonder einddatum', !!d.years?.has('zonder')) : ''}
+        ${shareStoppedCount() ? chip('gestopt', `Gestopt (${shareStoppedCount()})`, !!d.stopped) : ''}
       </div>
     </div>`;
   }
@@ -1340,7 +1349,7 @@ function renderShareChoose(el) {
   const n = cands.length;
   let preview;
   if (!d.sources.size) preview = 'Kies minstens één lijst.';
-  else if (shareChoiceInvalid(d)) preview = 'Kies minstens één jaar.';
+  else if (shareChoiceInvalid(d)) preview = shareStoppedCount() ? 'Kies minstens één jaar of Gestopt.' : 'Kies minstens één jaar.';
   else if (adding) preview = n ? `${n} ${n === 1 ? 'boek' : 'boeken'} erbij` : 'Geen nieuwe boeken bij deze keuze.';
   else preview = `${n} ${n === 1 ? 'boek' : 'boeken'}`;
 
@@ -1414,7 +1423,7 @@ function shareMake() {
   const inList = new Set(share.saved?.book_ids || []);
   const add = shareOrdered(shareCandidates(d).filter((b) => !inList.has(b.id))).map((b) => b.id);
   if (!add.length) return;
-  const choices = { sources: SHARE_SOURCES.filter((x) => d.sources.has(x)), years: d.years ? [...d.years] : null };
+  const choices = { sources: SHARE_SOURCES.filter((x) => d.sources.has(x)), years: d.years ? [...d.years] : null, stopped: !!d.stopped };
   if (adding) {
     shareMigrate();
     // Nieuwe boeken onderaan, in de standaardvolgorde (B35). Klopt de gekozen
@@ -1498,7 +1507,9 @@ $('#share').addEventListener('click', (e) => {
   if (yr && share.draft) {
     const y = yr.dataset.shareYear;
     const d = share.draft;
-    if (y === 'alle') {
+    if (y === 'gestopt') {
+      d.stopped = !d.stopped;               // los van de jaren aan/uit
+    } else if (y === 'alle') {
       d.years = null;                       // Alle jaren (standaard)
     } else {
       if (!d.years) d.years = new Set();    // van "Alle" naar losse jaren
