@@ -1543,14 +1543,15 @@ function noteLines(notes) {
 function shareText({ notes = shareOut.notes } = {}) {
   const { books, count } = shareContent();
   const out = [`Boekenlijst – ${fmtLongDate(new Date())} (${boeken(count)})`, ''];
-  for (const b of books) {
+  books.forEach((b, i) => {
+    if (i > 0) out.push(''); // lege regel tussen boeken: rustiger in berichten-apps
     const authors = authorsText(b.authors);
     const extra = [shareLabel(b)];
     if (b.pages) extra.push(`${b.pages} blz.`);
     if (b.rating) extra.push(stars(b.rating));
     out.push(`• ${(b.title || '').trim() || 'Zonder titel'}${authors ? ` – ${authors}` : ''} (${extra.join(', ')})`);
     if (notes) for (const l of noteLines(b.notes)) out.push(`  ${l}`);
-  }
+  });
   return out.join('\n');
 }
 
