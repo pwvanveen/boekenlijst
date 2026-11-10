@@ -19,6 +19,8 @@
    'settings') met account, thema, uitloggen en versienummer.
    Thema (B33): Systeem / Licht / Donker per toestel in localStorage; een inline
    script in <head> zet data-theme vóór de eerste weergave.
+   Kobo-import (fase 3a, B36–B39): CSV uit DB Browser for SQLite, alleen in de
+   browser gelezen; voorvertoning, dubbelen, opslaan in batches, ongedaan maken.
    ========================================================= */
 
 // Voor het vangnet in index.html: app.js is gestart
@@ -49,7 +51,7 @@ const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY
 });
 
 const STATUS = { wil_lezen: 'Leeslijst', bezig: 'Bezig', gelezen: 'Gelezen', gestopt: 'Gestopt' };
-const SOURCE = { google: 'Google Books', openlibrary: 'Open Library', handmatig: 'handmatig' };
+const SOURCE = { google: 'Google Books', openlibrary: 'Open Library', handmatig: 'handmatig', kobo: 'Kobo' };
 
 const state = {
   user: null,
@@ -138,6 +140,11 @@ function withTimeout(promise, ms, message) {
   ]).finally(() => clearTimeout(timer));
 }
 
+// NL-titels komen vaak binnen als "Titel / druk 1" (Google Books, Kobo)
+function stripDruk(t) {
+  return String(t ?? '').replace(/\s*\/\s*druk\s*\d+\s*$/i, '').trim();
+}
+
 function isIsbn(q) {
   const d = q.replace(/[-\s]/g, '');
   return /^(\d{9}[\dXx]|\d{13})$/.test(d) ? d.toUpperCase() : null;
@@ -197,6 +204,7 @@ function setUser(user) {
   $('#tabbar').hidden = !user;
   $('#btn-settings').hidden = !user;
   if (!user && sheet.open && sheet.mode === 'settings') closeSheet(); // elders uitgelogd
+  if (!user && kobo.active) koboClose(); // importscherm (fase 3a)
 
   if (!changed) return;
   resetViews(); // filters leeg, sortering van deze gebruiker (B20)
@@ -298,6 +306,8 @@ function renderSettingsSheet() {
       THEMES.map(([val, label, ic]) =>
         `<button type="button" role="radio" aria-checked="${val === cur}" data-theme-choice="${val}">${icon(ic)}<span>${label}</span></button>`
       ).join('')}</div>
+    <h3>Importeren</h3>
+    <button type="button" class="btn-import" data-settings="import">${icon('file-import')}<span>Importeren van Kobo</span></button>
     <h3>Uitloggen</h3>
     <button type="button" class="btn-logout" data-settings="logout">${icon('logout')}<span>Uitloggen</span></button>
     ${v ? `<p class="set-version">Versie ${esc(v)}</p>` : ''}`;
@@ -312,6 +322,7 @@ async function onSettingsClick(e) {
     });
     return;
   }
+  if (e.target.closest('[data-settings="import"]')) { koboOpen(); return; }
   if (e.target.closest('[data-settings="logout"]')) {
     const btn = e.target.closest('button');
     btn.disabled = true;
@@ -2004,8 +2015,7 @@ async function searchGoogle(q) {
     if (cover) cover = cover.replace(/^http:/, 'https:').replace('&edge=curl', '');
     return {
       isbn: isbnFound,
-      // NL-titels komen vaak binnen als "Titel / druk 1"
-      title: (v.title || '(zonder titel)').replace(/\s*\/\s*druk\s*\d+\s*$/i, ''),
+      title: stripDruk(v.title || '(zonder titel)') || '(zonder titel)',
       authors: v.authors || null,
       pages: v.pageCount || null,
       publisher: v.publisher || null,
@@ -2721,6 +2731,804 @@ window.addEventListener('popstate', () => { if (scan.active) closeScanner(true);
 // App naar de achtergrond, ander tabblad, scherm uit → camera altijd stoppen
 document.addEventListener('visibilitychange', () => { if (document.hidden && scan.active) closeScanner(); });
 window.addEventListener('pagehide', () => { if (scan.active) closeScanner(); });
+
+/* ---------- Importeren van Kobo (fase 3a, B36–B39) ----------
+   Paul maakt zelf een CSV met DB Browser for SQLite uit een kopie van
+   KoboReader.sqlite (vaste query, hieronder). Het bestand wordt alleen hier in
+   de browser gelezen (eigen kleine CSV-lezer, geen library) en niet geüpload;
+   alleen de boeken die je kiest, komen in Supabase. Volledig scherm met drie
+   stappen: 1 bestand, 2 voorvertoning, 3 opslaan en resultaat. */
+
+const KOBO_QUERY = `SELECT Title AS titel, Attribution AS auteur, ISBN AS isbn,
+       Publisher AS uitgever, Language AS taal,
+       ReadStatus AS status, ___PercentRead AS procent,
+       DateLastRead AS laatst_gelezen
+FROM content
+WHERE ContentType = 6 AND ReadStatus > 0
+ORDER BY DateLastRead DESC;`;
+
+// Kolommen op naam (hoofdletterongevoelig): Nederlandse namen uit de query én
+// de originele Kobo-namen. Alleen titel is verplicht; andere kolommen negeren we.
+const KOBO_COLUMNS = {
+  titel: ['titel', 'title'],
+  auteur: ['auteur', 'auteurs', 'attribution'],
+  isbn: ['isbn'],
+  uitgever: ['uitgever', 'publisher'],
+  taal: ['taal', 'language'],
+  status: ['status', 'readstatus'],
+  procent: ['procent', '___percentread', 'percentread'],
+  laatst_gelezen: ['laatst_gelezen', 'datelastread']
+};
+
+const KOBO_BATCH = 50;                     // max. boeken per insert (spec 3a)
+const KOBO_MAX_BYTES = 20 * 1024 * 1024;   // ruim; de CSV is normaal enkele kB
+const KOBO_STATUS_CHOICES = [              // volgorde van de keuzeknoppen (spec 3a)
+  ['gelezen', 'Gelezen', 'circle-check'],
+  ['bezig', 'Bezig', 'book-2'],
+  ['gestopt', 'Gestopt', 'player-stop'],
+  ['wil_lezen', 'Leeslijst', 'bookmark']
+];
+
+const kobo = {
+  active: false,
+  step: 1,          // 1 = bestand, 2 = voorvertoning, 3 = opslaan/resultaat
+  depth: 0,         // aantal eigen items in de browsergeschiedenis (terugknop)
+  ignorePop: 0,     // zoveel popstate-meldingen komen van onszelf
+  fileName: '',
+  error: '',
+  rows: [],         // vertaalde regels uit het bestand (na samenvoegen)
+  info: null,       // { merged, empty }
+  saving: false,
+  progress: null,   // { done, total }
+  result: null,     // { addedIds, filled, failed, lastError }
+  undone: false,
+  undoing: false
+};
+
+/* --- CSV lezen --- */
+
+// UTF-8 (BOM wordt genegeerd); geen geldige UTF-8 → Windows-1252 als terugval
+function koboDecode(buf) {
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch (_) { text = new TextDecoder('windows-1252').decode(buf); }
+  return text.replace(/^﻿/, '');
+}
+
+// Scheidingsteken uit de kopregel: wat het vaakst voorkomt van ; , en tab
+function csvDelimiter(text) {
+  const end = text.search(/[\r\n]/);
+  const head = (end < 0 ? text : text.slice(0, end)).replace(/"[^"]*"/g, '');
+  const counts = [';', ',', '\t'].map((d) => [d, head.split(d).length - 1]);
+  counts.sort((a, b) => b[1] - a[1]);
+  return counts[0][1] > 0 ? counts[0][0] : ',';
+}
+
+// CSV-regels: velden tussen aanhalingstekens mogen het scheidingsteken,
+// aanhalingstekens ("") en regeleinden bevatten. \r\n, \n en \r als regeleinde.
+function parseCsv(text, delim) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        quoted = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"' && !field.trim()) { field = ''; quoted = true; i++; continue; }
+    if (c === delim) { row.push(field); field = ''; i++; continue; }
+    if (c === '\r' || c === '\n') {
+      row.push(field); rows.push(row);
+      row = []; field = '';
+      i += c === '\r' && text[i + 1] === '\n' ? 2 : 1;
+      continue;
+    }
+    field += c; i++;
+  }
+  if (quoted) throw new Error('Het bestand kon niet worden gelezen: een aanhalingsteken is niet afgesloten.');
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((v) => v.trim() !== ''));
+}
+
+/* --- Vertaling per regel (B37) --- */
+
+function koboNum(v) {
+  const s = String(v ?? '').trim().replace(',', '.');
+  if (!s) return null;
+  const x = Number(s);
+  return Number.isFinite(x) ? x : null;
+}
+
+function isbn10Valid(s) {
+  let sum = 0;
+  for (let i = 0; i < 10; i++) sum += (s[i] === 'X' ? 10 : Number(s[i])) * (10 - i);
+  return s.indexOf('X') < 0 || s.indexOf('X') === 9 ? sum % 11 === 0 : false;
+}
+
+function isbn10to13(s) {
+  const base = '978' + s.slice(0, 9);
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(base[i]) * (i % 2 ? 3 : 1);
+  return base + ((10 - (sum % 10)) % 10);
+}
+
+// Alleen een echt ISBN: 978/979 met kloppend controlecijfer, of een geldig
+// ISBN-10 (omgezet naar 13). Kobo-codes (urn:uuid:…, 123…) → null.
+function koboIsbn(raw) {
+  const s = String(raw ?? '').trim().replace(/^(urn:)?isbn:?\s*/i, '').replace(/[-\s]/g, '').toUpperCase();
+  if (/^97[89]\d{10}$/.test(s)) return isValidIsbnBarcode(s) ? s : null;
+  if (/^\d{9}[\dX]$/.test(s) && isbn10Valid(s)) return isbn10to13(s);
+  return null;
+}
+
+function ymd(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function validYmd(y, m, d) {
+  const dt = new Date(Number(y), Number(m) - 1, Number(d), 12);
+  if (dt.getFullYear() !== Number(y) || dt.getMonth() !== Number(m) - 1 || dt.getDate() !== Number(d)) return null;
+  return ymd(dt);
+}
+
+// "laatst gelezen" → lokale datum JJJJ-MM-DD. ISO met of zonder Z, offset of
+// milliseconden; zonder tijdzone = UTC (zo slaat Kobo het op). Terugval:
+// dd-mm-jjjj (als iemand de CSV eerst in Excel heeft geopend).
+function koboDate(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:[.,]\d+)?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/i);
+  if (m) {
+    const [, y, mo, d, h, mi, sec, tz] = m;
+    if (!validYmd(y, mo, d)) return null;
+    if (h === undefined) return validYmd(y, mo, d);
+    let ms = Date.UTC(+y, +mo - 1, +d, +h, +mi, +(sec || 0));
+    if (tz && tz.toUpperCase() !== 'Z') {
+      const sign = tz[0] === '-' ? -1 : 1;
+      const digits = tz.replace(/\D/g, '');
+      ms -= sign * (Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2))) * 60000;
+    }
+    const dt = new Date(ms);
+    return Number.isNaN(dt.getTime()) ? null : ymd(dt);
+  }
+  m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/);
+  return m ? validYmd(m[3], m[2], m[1]) : null;
+}
+
+// Vergelijken op titel/auteur: kleine letters, zonder accenten, " / druk N",
+// leestekens en dubbele spaties (B38)
+function koboNorm(s) {
+  return fold(stripDruk(s)).replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function koboTitleKey(title, authors) {
+  const t = koboNorm(title);
+  return t ? `${t}|${koboNorm((authors || [])[0] || '')}` : null;
+}
+
+function koboRow(get) {
+  const title = stripDruk(get('titel'));
+  if (!title) return null;
+  const raw = get('isbn');
+  const percent = koboNum(get('procent'));
+  const status = koboNum(get('status'));
+  return {
+    title,
+    authors: get('auteur').split(',').map((a) => a.trim()).filter(Boolean),
+    isbn: koboIsbn(raw),
+    externalId: raw ? 'kobo:' + raw : null,
+    publisher: get('uitgever') || null,
+    language: normalizeLang(get('taal')),
+    lastRead: koboDate(get('laatst_gelezen')),
+    percent,
+    finished: status === 2 || (percent !== null && percent >= 100)
+  };
+}
+
+// Hele bestand → regels. Gooit een Error met een Nederlandse melding.
+function koboParse(text) {
+  if (!text.trim()) throw new Error('Het bestand is leeg.');
+  if (text.startsWith('SQLite format 3')) {
+    throw new Error('Dit is het Kobo-databasebestand zelf. Maak eerst met DB Browser for SQLite en de query hierboven een CSV-bestand en kies dat.');
+  }
+  const table = parseCsv(text, csvDelimiter(text));
+  if (!table.length) throw new Error('Het bestand is leeg.');
+  const head = table[0].map((h) => h.trim().toLowerCase());
+  const col = {};
+  for (const [key, names] of Object.entries(KOBO_COLUMNS)) {
+    const i = head.findIndex((h) => names.includes(h));
+    if (i >= 0) col[key] = i;
+  }
+  if (col.titel === undefined) {
+    throw new Error('Geen kolom “titel” gevonden. Is dit de CSV uit de query hierboven (met kopregel)?');
+  }
+  let empty = 0;
+  const rows = [];
+  for (const r of table.slice(1)) {
+    const row = koboRow((key) => (col[key] === undefined ? '' : String(r[col[key]] ?? '').trim()));
+    if (row) rows.push(row); else empty++;
+  }
+  if (!rows.length) throw new Error('Het bestand bevat geen boeken.');
+  const merged = koboMergeRows(rows);
+  return { rows: merged, info: { merged: rows.length - merged.length, empty } };
+}
+
+// Dubbele regels binnen het bestand (zelfde ISBN, Kobo-code of titel + eerste
+// auteur) → één regel: de meest recent gelezen, aangevuld met lege velden.
+// Blijft op de plek van de eerste regel (volgorde zoals in het bestand).
+function koboMergeRows(rows) {
+  const out = [];
+  const byKey = new Map();
+  const keysOf = (r) => [
+    r.isbn && 'i:' + r.isbn,
+    r.externalId && 'e:' + r.externalId,
+    koboTitleKey(r.title, r.authors) && 't:' + koboTitleKey(r.title, r.authors)
+  ].filter(Boolean);
+  for (const r of rows) {
+    const keys = keysOf(r);
+    const hit = keys.map((k) => byKey.get(k)).find(Boolean);
+    if (!hit) {
+      out.push(r);
+      keys.forEach((k) => byKey.set(k, r));
+      continue;
+    }
+    const newer = (r.lastRead || '') > (hit.lastRead || '');
+    const [base, other] = newer ? [r, hit] : [hit, r];
+    const m = { ...base };
+    for (const f of ['isbn', 'externalId', 'publisher', 'language', 'lastRead', 'percent']) {
+      if (m[f] === null || m[f] === undefined) m[f] = other[f];
+    }
+    if (!m.authors.length) m.authors = other.authors;
+    m.finished = base.finished || other.finished;
+    Object.assign(hit, m); // zelfde object, zelfde plek
+    keysOf(hit).concat(keys).forEach((k) => byKey.set(k, hit));
+  }
+  return out;
+}
+
+// Staat dit boek al in de lijst? Volgorde: ISBN → Kobo-code → titel + eerste auteur (B38)
+function koboIndex() {
+  const isbn = new Map();
+  const ext = new Map();
+  const ta = new Map();
+  for (const b of state.books) {
+    if (b.isbn && !isbn.has(b.isbn)) isbn.set(b.isbn, b);
+    if (b.external_id && !ext.has(b.external_id)) ext.set(b.external_id, b);
+    const k = koboTitleKey(b.title, b.authors);
+    if (k && !ta.has(k)) ta.set(k, b);
+  }
+  return (r) => (r.isbn && isbn.get(r.isbn))
+    || (r.externalId && ext.get(r.externalId))
+    || ta.get(koboTitleKey(r.title, r.authors))
+    || null;
+}
+
+// Voorstel voor half gelezen boeken: Bezig als je er < 3 maanden geleden in las
+function koboRecent(lastRead) {
+  if (!lastRead) return false;
+  const limit = new Date();
+  limit.setMonth(limit.getMonth() - 3);
+  return lastRead >= ymd(limit);
+}
+
+// Regels klaarzetten voor de voorvertoning (keuzes met standaardwaarden)
+function koboPrepare(rows) {
+  const find = koboIndex();
+  return rows.map((r, i) => ({
+    ...r,
+    k: i,
+    existing: find(r),
+    checked: r.finished,
+    status: r.finished ? 'gelezen' : koboRecent(r.lastRead) ? 'bezig' : 'gestopt',
+    action: 'skip',   // dubbel boek: 'skip' (Overslaan) of 'fill' (Aanvullen)
+    saved: null       // 'done' / 'failed'
+  }));
+}
+
+/* --- Wat er wordt opgeslagen --- */
+
+function koboInsertFields(r) {
+  const withEnd = r.status === 'gelezen' || r.status === 'gestopt';
+  return {
+    title: r.title,
+    authors: r.authors.length ? r.authors : null,
+    isbn: r.isbn,
+    publisher: r.publisher,
+    language: r.language,
+    status: r.status,
+    date_started: null,
+    date_finished: withEnd ? r.lastRead : null,
+    ereader: true,
+    source: 'kobo',
+    external_id: r.externalId
+  };
+}
+
+// Aanvullen (B38): alleen lege velden; status, datums, sterren, notities en
+// cover nooit overschrijven. Einddatum alleen bij Gelezen/Gestopt, zonder
+// einddatum, en niet vóór een bestaande startdatum.
+function koboFillFields(r, b) {
+  const f = {};
+  if (!b.ereader) f.ereader = true;
+  if (!b.isbn && r.isbn) f.isbn = r.isbn;
+  if (!b.language && r.language) f.language = r.language;
+  if (!b.publisher && r.publisher) f.publisher = r.publisher;
+  if ((b.status === 'gelezen' || b.status === 'gestopt') && !b.date_finished && r.lastRead
+      && (!b.date_started || r.lastRead >= b.date_started)) {
+    f.date_finished = r.lastRead;
+  }
+  return f;
+}
+
+const koboNew = () => kobo.rows.filter((r) => !r.existing);
+const koboChosen = () => kobo.rows.filter((r) => (r.existing ? r.action === 'fill' : r.checked));
+
+/* --- Scherm openen, sluiten en terugknop --- */
+
+function koboOpen() {
+  if (kobo.active || !state.user) return;
+  Object.assign(kobo, {
+    active: true, step: 1, depth: 0, ignorePop: 0, fileName: '', error: '', rows: [], info: null,
+    saving: false, progress: null, result: null, undone: false, undoing: false
+  });
+  // Komt uit Instellingen: het history-item van het onderpaneel overnemen,
+  // anders zou history.back() van het paneel ons eigen item weghalen.
+  if (sheet.open && sheet.pushedHistory) {
+    sheet.pushedHistory = false;
+    closeSheet();
+    sheetEl.hidden = true;        // meteen weg, geen schuifanimatie achter het scherm
+    sheetBackdrop.hidden = true;
+    history.replaceState({ kobo: 1 }, '');
+  } else {
+    if (sheet.open) closeSheet();
+    history.pushState({ kobo: 1 }, '');
+  }
+  kobo.depth = 1;
+  $('#kobo').hidden = false;
+  document.body.style.overflow = 'hidden';
+  koboRender();
+  $('#kobo-back').focus({ preventScroll: true });
+}
+
+// Sluiten en de eigen history-items opruimen. Bij de terugknop heeft popstate
+// er al één weggehaald (depth is dan al verlaagd).
+function koboClose() {
+  if (!kobo.active) return;
+  kobo.active = false;
+  $('#kobo').hidden = true;
+  $('#kobo-body').innerHTML = '';
+  $('#kobo-foot').hidden = true;
+  document.body.style.overflow = '';
+  const n = kobo.depth;
+  kobo.depth = 0;
+  kobo.rows = [];
+  if (n > 0) history.go(-n);
+}
+
+// Kopbalkknop, terugknop van Android en Escape: stap 2 → stap 1, anders sluiten
+function koboBack() {
+  if (!kobo.active) return;
+  if (kobo.saving || kobo.undoing) { toast('Even wachten tot het opslaan klaar is'); return; }
+  if (kobo.step === 2) { history.back(); return; } // popstate doet de rest
+  koboClose();
+}
+
+window.addEventListener('popstate', () => {
+  if (!kobo.active) return;
+  if (kobo.ignorePop > 0) { kobo.ignorePop--; return; }
+  kobo.depth = Math.max(0, kobo.depth - 1);
+  if (kobo.saving || kobo.undoing) {
+    // Tijdens opslaan niet weg: item terugzetten
+    history.pushState({ kobo: kobo.step }, '');
+    kobo.depth++;
+    toast('Even wachten tot het opslaan klaar is');
+    return;
+  }
+  if (kobo.step === 2 && kobo.depth >= 1) {
+    kobo.step = 1;
+    kobo.error = '';
+    koboRender();
+    return;
+  }
+  koboClose();
+});
+
+$('#kobo-back').addEventListener('click', koboBack);
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !kobo.active || dlg.open) return;
+  e.preventDefault();
+  koboBack();
+});
+
+/* --- Bestand kiezen --- */
+
+$('#kobo-file').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = ''; // zelfde bestand opnieuw kiezen moet ook werken
+  if (!file || !kobo.active) return;
+  let parsed;
+  try {
+    if (!state.booksLoaded) throw new Error('Je boeken zijn nog niet geladen. Probeer het zo opnieuw.');
+    if (file.size > KOBO_MAX_BYTES) throw new Error('Dit bestand is erg groot. Kies de CSV die je met de query hebt gemaakt.');
+    parsed = koboParse(koboDecode(await file.arrayBuffer()));
+  } catch (err) {
+    console.warn('Kobo-bestand lezen mislukt:', err);
+    koboShowError(err.message || 'Het bestand kon niet worden gelezen.');
+    return;
+  }
+  if (!kobo.active) return;
+  kobo.fileName = file.name;
+  kobo.error = '';
+  kobo.rows = koboPrepare(parsed.rows);
+  kobo.info = parsed.info;
+  if (kobo.step !== 2) {
+    history.pushState({ kobo: 2 }, '');
+    kobo.depth++;
+  }
+  kobo.step = 2;
+  koboRender();
+  $('#kobo-body').scrollTop = 0;
+});
+
+// Fout bij inlezen: altijd terug naar stap 1 met de melding
+function koboShowError(msg) {
+  if (!kobo.active) return;
+  if (kobo.step === 2) {
+    kobo.ignorePop++;
+    kobo.depth = Math.max(1, kobo.depth - 1);
+    history.back();
+  }
+  kobo.step = 1;
+  kobo.error = msg;
+  kobo.rows = [];
+  koboRender();
+  $('#kobo-error')?.scrollIntoView({ block: 'center' });
+}
+
+/* --- Weergave --- */
+
+function koboRender() {
+  const body = $('#kobo-body');
+  const foot = $('#kobo-foot');
+  const back = $('#kobo-back');
+  const label = kobo.step === 2 ? 'Terug' : 'Sluiten';
+  back.setAttribute('aria-label', label);
+  back.title = label;
+  back.disabled = kobo.saving || kobo.undoing;
+  if (kobo.step === 1) body.innerHTML = koboStep1Html();
+  else if (kobo.step === 2) body.innerHTML = koboStep2Html();
+  else body.innerHTML = koboStep3Html();
+  foot.hidden = kobo.step !== 2;
+  if (kobo.step === 2) koboUpdateFoot();
+}
+
+function koboStep1Html() {
+  return `<div class="kobo-inner">
+    <p class="kobo-step-label">Stap 1 van 3 · Bestand</p>
+    <p class="kobo-intro">Lees de boeken van je Kobo in. Dat gaat via een CSV-bestand dat je zelf op de computer maakt:</p>
+    <ol class="kobo-howto">
+      <li>Sluit de Kobo met de USB-kabel aan op de computer.</li>
+      <li>Kopieer het bestand <code>KoboReader.sqlite</code> uit de map <code>.kobo</code> naar je computer. Die map is verborgen: zet het tonen van verborgen bestanden aan.</li>
+      <li>Open de <strong>kopie</strong> in DB Browser for SQLite en ga naar het tabblad <strong>SQL uitvoeren</strong>.</li>
+      <li>Plak de query hieronder en voer hem uit.</li>
+      <li>Sla het resultaat op als CSV-bestand (Exporteren naar CSV).</li>
+    </ol>
+    <div class="kobo-query-head">
+      <span id="kobo-query-label">Query</span>
+      <button type="button" class="kobo-copy" data-kobo="copy">${icon('copy', 18)}<span>Query kopiëren</span></button>
+    </div>
+    <pre class="kobo-query" aria-labelledby="kobo-query-label"><code>${esc(KOBO_QUERY)}</code></pre>
+    <button type="button" class="primary kobo-pickfile" data-kobo="pick">${icon('file-import')}<span>CSV-bestand kiezen</span></button>
+    <p class="kobo-privacy">Het bestand blijft op dit toestel; alleen de boeken die je importeert, worden opgeslagen.</p>
+    ${kobo.error ? `<p class="msg error kobo-error" id="kobo-error" role="alert">${esc(kobo.error)}</p>` : ''}
+  </div>`;
+}
+
+function koboStep2Html() {
+  const rows = kobo.rows;
+  const dups = rows.filter((r) => r.existing).length;
+  const finished = rows.filter((r) => r.finished).length;
+  const extra = [];
+  if (kobo.info?.merged) extra.push(`${kobo.info.merged} dubbele ${kobo.info.merged === 1 ? 'regel' : 'regels'} samengevoegd`);
+  if (kobo.info?.empty) extra.push(`${kobo.info.empty} ${kobo.info.empty === 1 ? 'regel' : 'regels'} zonder titel overgeslagen`);
+  const hasNew = rows.length > dups;
+  return `<div class="kobo-inner">
+    <p class="kobo-step-label">Stap 2 van 3 · Kiezen</p>
+    <div class="kobo-file">
+      <span class="kobo-file-name" title="${esc(kobo.fileName)}">${esc(kobo.fileName)}</span>
+      <button type="button" class="link" data-kobo="pick">Ander bestand kiezen</button>
+    </div>
+    <p class="kobo-summary">${boeken(rows.length)} gevonden · ${finished} uitgelezen · ${dups} ${dups === 1 ? 'staat' : 'staan'} al in je lijst</p>
+    ${extra.length ? `<p class="kobo-summary-extra">${esc(extra.join(' · '))}</p>` : ''}
+    ${hasNew ? `<div class="kobo-quick" role="group" aria-label="Snel kiezen">
+      <span>Kies:</span>
+      <button type="button" data-kobo-quick="finished">Alle uitgelezen</button>
+      <button type="button" data-kobo-quick="all">Alles</button>
+      <button type="button" data-kobo-quick="none">Niets</button>
+    </div>` : ''}
+    <p class="kobo-hint">Titel en auteur pas je na de import aan via het boek zelf.</p>
+    <ul class="kobo-list">${rows.map(koboItemHtml).join('')}</ul>
+  </div>`;
+}
+
+function koboReadText(r) {
+  const parts = [r.finished ? 'Uitgelezen' : r.percent !== null ? `${Math.round(r.percent)}%` : 'Niet uitgelezen'];
+  if (r.lastRead) parts.push(`laatst gelezen ${fmtDate(r.lastRead)}`);
+  return parts.join(' · ');
+}
+
+function koboItemHtml(r) {
+  const info = `${placeholderHtml(r)}
+    <span class="info">
+      <span class="title">${esc(r.title)}</span>
+      ${r.authors.length ? `<span class="authors">${esc(authorsText(r.authors))}</span>` : ''}
+      <span class="meta">${esc(koboReadText(r))}</span>
+      ${!r.isbn ? '<span class="kobo-tag">Geen ISBN</span>' : ''}
+    </span>`;
+
+  if (r.existing) {
+    const st = STATUS[r.existing.status] || r.existing.status;
+    return `<li class="kobo-item dup" data-k="${r.k}">
+      <div class="kobo-pick"><span class="kobo-dup-ico" aria-hidden="true">${icon('copy', 18)}</span>${info}</div>
+      <p class="kobo-dup-label">Staat al in je lijst (${esc(st)})</p>
+      <div class="chips kobo-dup-choice" role="radiogroup" aria-label="“${esc(r.title)}”: overslaan of aanvullen">
+        <button type="button" role="radio" aria-checked="${r.action === 'skip'}" data-kobo-action="skip" data-k="${r.k}">Overslaan</button>
+        <button type="button" role="radio" aria-checked="${r.action === 'fill'}" data-kobo-action="fill" data-k="${r.k}">Aanvullen</button>
+      </div>
+    </li>`;
+  }
+
+  return `<li class="kobo-item${r.checked ? '' : ' off'}" data-k="${r.k}">
+    <label class="kobo-pick">
+      <input type="checkbox" data-kobo-check="${r.k}" ${r.checked ? 'checked' : ''}>
+      ${info}
+    </label>
+    ${r.checked ? `<div class="segmented kobo-status" role="radiogroup" aria-label="“${esc(r.title)}” importeren als">${
+      KOBO_STATUS_CHOICES.map(([val, label, ic]) =>
+        `<button type="button" role="radio" aria-checked="${r.status === val}" data-kobo-status="${val}" data-k="${r.k}">${icon(ic, 18)}<span>${label}</span></button>`
+      ).join('')}</div>` : ''}
+  </li>`;
+}
+
+function koboUpdateFoot() {
+  const n = koboNew().filter((r) => r.checked).length;
+  const m = kobo.rows.filter((r) => r.existing && r.action === 'fill').length;
+  const parts = [];
+  if (n) parts.push(`${boeken(n)} importeren`);
+  if (m) parts.push(`${m} aanvullen`);
+  $('#kobo-foot').innerHTML = `<button type="button" class="primary" data-kobo="save" ${parts.length ? '' : 'disabled'}>${
+    parts.length ? esc(parts.join(' · ')) : 'Niets gekozen'}</button>`;
+}
+
+function koboStep3Html() {
+  if (kobo.saving || !kobo.result) {
+    const p = kobo.progress || { done: 0, total: 0 };
+    return `<div class="kobo-inner">
+      <p class="kobo-step-label">Stap 3 van 3 · Opslaan</p>
+      <p class="kobo-progress-text" role="status">Opslaan… ${p.done}/${p.total}</p>
+      <progress class="kobo-progress" max="${p.total || 1}" value="${p.done}"></progress>
+      <p class="kobo-hint">Laat dit scherm open tot het opslaan klaar is.</p>
+    </div>`;
+  }
+  const res = kobo.result;
+  const added = res.addedIds.length;
+  const failed = res.failed;
+  const skipped = kobo.rows.filter((r) => (r.existing ? r.action === 'skip' : !r.checked)).length;
+  let html = `<div class="kobo-inner">
+    <p class="kobo-step-label">Stap 3 van 3 · Resultaat</p>
+    <h2>${kobo.undone ? 'Import ongedaan gemaakt' : failed ? 'Gedeeltelijk gelukt' : 'Klaar'}</h2>`;
+  if (kobo.undone) {
+    html += `<p class="kobo-result">${boeken(added)} weer verwijderd${res.filled ? ` · ${res.filled} aangevuld (blijven zo)` : ''}</p>`;
+  } else {
+    html += `<p class="kobo-result">${added} toegevoegd · ${res.filled} aangevuld · ${skipped} overgeslagen</p>`;
+    if (failed) {
+      html += `<p class="msg error" role="alert">${failed} niet gelukt${res.lastError ? `: ${esc(res.lastError)}` : ''}. Wat wel gelukt is, blijft bewaard.</p>
+        <button type="button" class="kobo-wide" data-kobo="retry">Opnieuw proberen</button>`;
+    }
+    if (added) html += '<p class="kobo-hint">Covers en aantallen bladzijdes ontbreken nog; die kun je per boek aanvullen via bewerken.</p>';
+  }
+  html += `<div class="kobo-done-actions">
+      <button type="button" class="primary" data-kobo="done">Klaar</button>
+      ${added && !kobo.undone ? `<button type="button" data-kobo="undo" ${kobo.undoing ? 'disabled' : ''}>Import ongedaan maken</button>` : ''}
+    </div>
+  </div>`;
+  return html;
+}
+
+/* --- Bediening --- */
+
+$('#kobo-body').addEventListener('click', (e) => {
+  const act = e.target.closest('[data-kobo]')?.dataset.kobo;
+  if (act === 'pick') { $('#kobo-file').click(); return; }
+  if (act === 'copy') { koboCopyQuery(); return; }
+  if (act === 'retry') { koboSave(); return; }
+  if (act === 'undo') { koboUndo(); return; }
+  if (act === 'done') { koboDone(); return; }
+
+  const quick = e.target.closest('[data-kobo-quick]')?.dataset.koboQuick;
+  if (quick) {
+    for (const r of koboNew()) r.checked = quick === 'all' || (quick === 'finished' && r.finished);
+    $('#kobo-body').querySelector('.kobo-list').innerHTML = kobo.rows.map(koboItemHtml).join('');
+    koboUpdateFoot();
+    return;
+  }
+
+  const st = e.target.closest('[data-kobo-status]');
+  if (st) {
+    const r = kobo.rows[Number(st.dataset.k)];
+    r.status = st.dataset.koboStatus;
+    st.parentElement.querySelectorAll('[data-kobo-status]').forEach((b) =>
+      b.setAttribute('aria-checked', String(b === st)));
+    return;
+  }
+
+  const ac = e.target.closest('[data-kobo-action]');
+  if (ac) {
+    const r = kobo.rows[Number(ac.dataset.k)];
+    r.action = ac.dataset.koboAction;
+    ac.parentElement.querySelectorAll('[data-kobo-action]').forEach((b) =>
+      b.setAttribute('aria-checked', String(b === ac)));
+    koboUpdateFoot();
+  }
+});
+
+$('#kobo-body').addEventListener('change', (e) => {
+  const k = e.target.dataset?.koboCheck;
+  if (k === undefined) return;
+  const r = kobo.rows[Number(k)];
+  r.checked = e.target.checked;
+  const li = e.target.closest('li.kobo-item');
+  li.outerHTML = koboItemHtml(r);
+  $('#kobo-body').querySelector(`[data-kobo-check="${k}"]`)?.focus({ preventScroll: true });
+  koboUpdateFoot();
+});
+
+$('#kobo-foot').addEventListener('click', (e) => {
+  if (e.target.closest('[data-kobo="save"]')) koboSave();
+});
+
+function koboCopyQuery() {
+  const done = (ok) => toast(ok ? 'Query gekopieerd' : 'Kopiëren lukte niet; selecteer de query en kopieer hem zelf.');
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(KOBO_QUERY).then(() => done(true), () => done(legacyCopy(KOBO_QUERY)));
+  } else {
+    done(legacyCopy(KOBO_QUERY));
+  }
+}
+
+/* --- Opslaan (stap 3) --- */
+
+async function koboSave() {
+  if (kobo.saving) return;
+  const jobs = koboChosen().filter((r) => r.saved !== 'done');
+  if (!jobs.length && !kobo.result) return;
+  if (kobo.step === 2) history.replaceState({ kobo: 3 }, ''); // terug vanuit 3 = sluiten
+  kobo.step = 3;
+  kobo.saving = true;
+  kobo.result = kobo.result || { addedIds: [], filled: 0, failed: 0, lastError: '' };
+  kobo.result.failed = 0;
+  kobo.result.lastError = '';
+  const total = koboChosen().length;
+  kobo.progress = { done: total - jobs.length, total };
+  koboRender();
+
+  const step = () => {
+    const t = kobo.progress;
+    const txt = $('#kobo-body .kobo-progress-text');
+    if (txt) txt.textContent = `Opslaan… ${t.done}/${t.total}`;
+    const bar = $('#kobo-body .kobo-progress');
+    if (bar) bar.value = t.done;
+  };
+
+  const fail = (rows, err) => {
+    rows.forEach((r) => { r.saved = 'failed'; });
+    kobo.result.failed += rows.length;
+    kobo.result.lastError = err?.message || String(err || 'onbekende fout');
+    console.error('Kobo-import: opslaan mislukt:', err);
+  };
+
+  // Nieuwe boeken: één insert per batch van max. 50
+  const inserts = jobs.filter((r) => !r.existing);
+  for (let i = 0; i < inserts.length; i += KOBO_BATCH) {
+    const batch = inserts.slice(i, i + KOBO_BATCH);
+    try {
+      const { data, error } = await sb.from('books').insert(batch.map(koboInsertFields)).select();
+      if (error) throw error;
+      const saved = data || [];
+      batch.forEach((r, j) => { r.saved = 'done'; r.id = saved[j]?.id; });
+      for (const b of saved) {
+        kobo.result.addedIds.push(b.id);
+        state.books.unshift(b);
+      }
+      kobo.progress.done += batch.length;
+    } catch (err) {
+      fail(batch, err);
+    }
+    step();
+    render();
+  }
+
+  // Aanvullingen: per boek, alleen de gewijzigde velden
+  for (const r of jobs.filter((x) => x.existing)) {
+    const b = state.books.find((x) => x.id === r.existing.id) || r.existing;
+    const fields = koboFillFields(r, b);
+    try {
+      if (Object.keys(fields).length) {
+        const { data, error } = await sb.from('books')
+          .update({ ...fields, updated_at: new Date().toISOString() })
+          .eq('id', b.id).select().single();
+        if (error) throw error;
+        const idx = state.books.findIndex((x) => x.id === data.id);
+        if (idx >= 0) state.books[idx] = data;
+        r.existing = data;
+      }
+      r.saved = 'done';
+      kobo.result.filled++;
+      kobo.progress.done++;
+    } catch (err) {
+      fail([r], err);
+    }
+    step();
+  }
+
+  kobo.saving = false;
+  render();
+  if (kobo.active) koboRender();
+}
+
+function koboDone() {
+  const years = kobo.undone ? [] : kobo.rows
+    .filter((r) => r.saved === 'done' && !r.existing && r.status === 'gelezen' && r.lastRead)
+    .map((r) => r.lastRead.slice(0, 4));
+  koboClose();
+  if (years.length) state.openYears.add(years.sort().pop()); // meest recente jaar openklappen
+  showTab('gelezen');
+  render();
+}
+
+// Alleen de zojuist toegevoegde boeken verwijderen; aanvullingen blijven (B39)
+async function koboUndo() {
+  const ids = kobo.result?.addedIds || [];
+  if (!ids.length || kobo.undoing || kobo.undone) return;
+  if (!confirm(`De ${boeken(ids.length)} die je net hebt toegevoegd weer verwijderen?`
+    + (kobo.result.filled ? ' Aangevulde boeken blijven zoals ze nu zijn.' : ''))) return;
+  kobo.undoing = true;
+  koboRender();
+  const removed = [];
+  let error = null;
+  for (let i = 0; i < ids.length; i += KOBO_BATCH) {
+    const chunk = ids.slice(i, i + KOBO_BATCH);
+    try {
+      const res = await sb.from('books').delete().in('id', chunk);
+      if (res.error) throw res.error;
+      removed.push(...chunk);
+    } catch (err) {
+      error = err;
+      break;
+    }
+  }
+  const gone = new Set(removed);
+  state.books = state.books.filter((b) => !gone.has(b.id));
+  kobo.result.addedIds = ids.filter((id) => !gone.has(id));
+  kobo.undoing = false;
+  if (error) {
+    console.error('Kobo-import ongedaan maken mislukt:', error);
+    toast(`Ongedaan maken lukte maar deels (${removed.length} van ${ids.length}): ${error.message || error}`, { duration: 5000 });
+  } else {
+    kobo.undone = true;
+    kobo.result.addedIds = ids; // voor de tekst "x weer verwijderd"
+    toast('Import ongedaan gemaakt');
+  }
+  render();
+  if (kobo.active) koboRender();
+}
 
 /* ---------- Start ---------- */
 

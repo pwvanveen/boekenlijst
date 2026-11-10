@@ -24,12 +24,12 @@
   <!-- Beginschermicoon en app-weergave (fase 2g, B31). Bewust GEEN
        apple-mobile-web-app-capable: op iPhone een gewone Safari-snelkoppeling,
        zodat inloggen via de maillink blijft werken. -->
-  <link rel="manifest" href="manifest.webmanifest?v=2j2">
-  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=2j2">
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2j2">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2j2">
+  <link rel="manifest" href="manifest.webmanifest?v=3a1">
+  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=3a1">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=3a1">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=3a1">
   <meta name="apple-mobile-web-app-title" content="Boekenlijst">
-  <link rel="stylesheet" href="style.css?v=2j2">
+  <link rel="stylesheet" href="style.css?v=3a1">
   <script>
     /* Foutmelding-vangnet: fouten en niet-geladen bestanden verschijnen op het
        scherm in plaats van een eindeloos "Laden…". Staat bewust inline en
@@ -71,8 +71,8 @@
   <!-- ?v=…: versienummer van deze levering. Bij elke nieuwe versie ophogen, zodat
        de browser geen oude style.css/app.js uit de cache combineert met een nieuwe pagina. -->
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="config.js?v=2j2"></script>
-  <script defer src="app.js?v=2j2"></script>
+  <script defer src="config.js?v=3a1"></script>
+  <script defer src="app.js?v=3a1"></script>
 </head>
 <body>
   <!-- Iconen (fase 2f, B29): Tabler Icons v3.51.0, outline — https://tabler.io/icons
@@ -102,6 +102,9 @@
     <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008"/></symbol>
     <symbol id="i-device-tablet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4a1 1 0 0 1 1 -1h12a1 1 0 0 1 1 1v16a1 1 0 0 1 -1 1h-12a1 1 0 0 1 -1 -1v-16"/><path d="M11 17a1 1 0 1 0 2 0a1 1 0 0 0 -2 0"/></symbol>
     <symbol id="i-grip-vertical" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M8 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M8 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M14 5a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M14 12a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/><path d="M14 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0"/></symbol>
+    <symbol id="i-file-import" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M5 13v-8a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2h-5.5m-9.5 -2h7m-3 -3l3 3l-3 3"/></symbol>
+    <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l14 0"/><path d="M5 12l6 6"/><path d="M5 12l6 -6"/></symbol>
+    <symbol id="i-player-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7a2 2 0 0 1 2 -2h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2l0 -10"/></symbol>
   </svg>
 
   <!-- Foutmelding-vangnet (opmaak inline: werkt ook als style.css niet laadt) -->
@@ -316,6 +319,18 @@
   <!-- Afdrukweergave van de deellijst (fase 2e, B25). Alleen zichtbaar bij
        afdrukken via "PDF / afdrukken"; wordt pas dan gevuld. -->
   <div id="print" class="print-root" aria-hidden="true"></div>
+
+  <!-- Importeren van Kobo (fase 3a, B36–B39): volledig scherm, drie stappen.
+       Inhoud wordt door app.js opgebouwd; het CSV-bestand blijft in de browser. -->
+  <div id="kobo" class="kobo-screen" hidden role="dialog" aria-modal="true" aria-labelledby="kobo-title">
+    <header class="kobo-bar">
+      <button type="button" id="kobo-back" class="icon-btn" aria-label="Terug" title="Terug"><svg class="i" width="24" height="24" aria-hidden="true" focusable="false"><use href="#i-arrow-left"/></svg></button>
+      <h1 id="kobo-title">Importeren van Kobo</h1>
+    </header>
+    <div id="kobo-body" class="kobo-body"></div>
+    <div id="kobo-foot" class="kobo-foot" hidden></div>
+    <input type="file" id="kobo-file" accept=".csv,text/csv" hidden>
+  </div>
 
   <div id="toast" role="status"></div>
 </body>
