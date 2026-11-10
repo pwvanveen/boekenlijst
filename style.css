@@ -60,7 +60,9 @@ body {
   padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
   background: var(--accent); color: var(--accent-text);
 }
-.topbar h1 { margin: 0; font-size: 1.15rem; }
+.topbar h1 { margin: 0; font-size: 1.15rem; display: flex; align-items: center; gap: 10px; }
+/* Logo in de kopbalk (B41): het app-icoon in de tekstkleur, bladwijzer uitgespaard */
+.topbar h1 .logo { flex: none; display: block; width: 22px; height: 26px; }
 .topbar-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
 /* Tandwiel (fase 2h, B32) */
 .icon-btn {
