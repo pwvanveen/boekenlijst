@@ -3,19 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <!-- Kleur statusbalk (Android): sluit aan op de achtergrond, ook in donkere modus -->
+  <!-- Kleur statusbalk (Android): sluit aan op de achtergrond, ook in donkere modus.
+       Bij een vaste themakeuze (B33) zetten het script hieronder en app.js beide tags op één kleur. -->
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f4ef">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#161917">
+  <script>
+    /* Thema (fase 2h, B33): Systeem / Licht / Donker, per toestel bewaard.
+       Inline en vóór de stylesheet, zodat de juiste kleuren er meteen staan (geen flits). */
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('boekenlijst.theme'); } catch (e) {}
+      if (t !== 'light' && t !== 'dark') return; // 'system' of niets: volg de telefoon
+      document.documentElement.setAttribute('data-theme', t);
+      var c = t === 'dark' ? '#161917' : '#f6f4ef';
+      var m = document.querySelectorAll('meta[name="theme-color"]');
+      for (var i = 0; i < m.length; i++) m[i].setAttribute('content', c);
+    })();
+  </script>
   <title>Boekenlijst</title>
   <!-- Beginschermicoon en app-weergave (fase 2g, B31). Bewust GEEN
        apple-mobile-web-app-capable: op iPhone een gewone Safari-snelkoppeling,
        zodat inloggen via de maillink blijft werken. -->
-  <link rel="manifest" href="manifest.webmanifest?v=2g1">
-  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=2g1">
-  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2g1">
-  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2g1">
+  <link rel="manifest" href="manifest.webmanifest?v=2h1">
+  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg?v=2h1">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2h1">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2h1">
   <meta name="apple-mobile-web-app-title" content="Boekenlijst">
-  <link rel="stylesheet" href="style.css?v=2g1">
+  <link rel="stylesheet" href="style.css?v=2h1">
   <script>
     /* Foutmelding-vangnet: fouten en niet-geladen bestanden verschijnen op het
        scherm in plaats van een eindeloos "Laden…". Staat bewust inline en
@@ -57,8 +71,8 @@
   <!-- ?v=…: versienummer van deze levering. Bij elke nieuwe versie ophogen, zodat
        de browser geen oude style.css/app.js uit de cache combineert met een nieuwe pagina. -->
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="config.js?v=2g1"></script>
-  <script defer src="app.js?v=2g1"></script>
+  <script defer src="config.js?v=2h1"></script>
+  <script defer src="app.js?v=2h1"></script>
 </head>
 <body>
   <!-- Iconen (fase 2f, B29): Tabler Icons v3.51.0, outline — https://tabler.io/icons
@@ -81,6 +95,11 @@
     <symbol id="i-printer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 17h2a2 2 0 0 0 2 -2v-4a2 2 0 0 0 -2 -2h-14a2 2 0 0 0 -2 2v4a2 2 0 0 0 2 2h2"/><path d="M17 9v-4a2 2 0 0 0 -2 -2h-6a2 2 0 0 0 -2 2v4"/><path d="M7 15a2 2 0 0 1 2 -2h6a2 2 0 0 1 2 2v4a2 2 0 0 1 -2 2h-6a2 2 0 0 1 -2 -2l0 -4"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666"/><path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6l-12 12"/><path d="M6 6l12 12"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.325 4.317c.426 -1.756 2.924 -1.756 3.35 0a1.724 1.724 0 0 0 2.573 1.066c1.543 -.94 3.31 .826 2.37 2.37a1.724 1.724 0 0 0 1.065 2.572c1.756 .426 1.756 2.924 0 3.35a1.724 1.724 0 0 0 -1.066 2.573c.94 1.543 -.826 3.31 -2.37 2.37a1.724 1.724 0 0 0 -2.572 1.065c-.426 1.756 -2.924 1.756 -3.35 0a1.724 1.724 0 0 0 -2.573 -1.066c-1.543 .94 -3.31 -.826 -2.37 -2.37a1.724 1.724 0 0 0 -1.065 -2.572c-1.756 -.426 -1.756 -2.924 0 -3.35a1.724 1.724 0 0 0 1.066 -2.573c-.94 -1.543 .826 -3.31 2.37 -2.37c1 .608 2.296 .07 2.572 -1.065"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2"/><path d="M9 12h12l-3 -3"/><path d="M18 15l3 -3"/></symbol>
+    <symbol id="i-device-mobile" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-8a2 2 0 0 1 -2 -2v-14"/><path d="M11 4h2"/><path d="M12 17v.01"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008"/></symbol>
   </svg>
 
   <!-- Foutmelding-vangnet (opmaak inline: werkt ook als style.css niet laadt) -->
@@ -96,8 +115,7 @@
   <header class="topbar">
     <h1>Boekenlijst</h1>
     <div class="topbar-right">
-      <span id="user-email" class="user-email"></span>
-      <button id="btn-logout" class="link" type="button" hidden>Uitloggen</button>
+      <button id="btn-settings" class="icon-btn" type="button" aria-label="Instellingen" title="Instellingen" hidden><svg class="i" width="24" height="24" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg></button>
     </div>
   </header>
 
@@ -269,7 +287,7 @@
     </div>
   </div>
 
-  <!-- Sorteren en filteren: onderpaneel (fase 2c, B19/B20) -->
+  <!-- Onderpaneel: sorteren/filteren (fase 2c), deelvenster (2e), instellingen (2h) -->
   <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
   <div id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1" hidden>
     <div class="sheet-grab" aria-hidden="true"></div>

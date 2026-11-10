@@ -4,7 +4,7 @@
    Boekenlijst – fase 1 (MVP) + 2a (barcode scannen) + 2b (covers)
    + 2c (sorteren en filteren) + 2d (tabblad Delen)
    + 2e (delen als tekst, kopiëren, PDF / afdrukken)
-   + 2f (naamgeving en iconen, B28/B29)
+   + 2f (naamgeving en iconen, B28/B29) + 2h (instellingen en thema, B32/B33)
    Inloggen (magic link), zoeken (Google Books → Open Library),
    toevoegen, status/datums, lijsten Bezig / Leeslijst / Gelezen per jaar,
    ISBN-barcode scannen met de camera (BarcodeDetector, met polyfill),
@@ -15,6 +15,10 @@
    Naamgeving (B28): status 'wil_lezen' heet in de interface "Leeslijst", het
    tabblad 'zoeken' heet "Toevoegen". Interne waarden en opslagsleutels blijven.
    Iconen (B29): Tabler Icons (outline, MIT) als inline SVG-sprite in index.html.
+   Instellingen (B32): tandwiel in de kopbalk opent het onderpaneel (modus
+   'settings') met account, thema, uitloggen en versienummer.
+   Thema (B33): Systeem / Licht / Donker per toestel in localStorage; een inline
+   script in <head> zet data-theme vóór de eerste weergave.
    ========================================================= */
 
 // Voor het vangnet in index.html: app.js is gestart
@@ -191,8 +195,8 @@ function setUser(user) {
   $('#view-login').hidden = !!user;
   $('#view-app').hidden = !user;
   $('#tabbar').hidden = !user;
-  $('#btn-logout').hidden = !user;
-  $('#user-email').textContent = user?.email ?? '';
+  $('#btn-settings').hidden = !user;
+  if (!user && sheet.open && sheet.mode === 'settings') closeSheet(); // elders uitgelogd
 
   if (!changed) return;
   resetViews(); // filters leeg, sortering van deze gebruiker (B20)
@@ -225,10 +229,99 @@ $('#login-form').addEventListener('submit', async (e) => {
   }
 });
 
-$('#btn-logout').addEventListener('click', async () => {
-  await sb.auth.signOut();
-  showTab('bezig');
-});
+$('#btn-settings').addEventListener('click', () => openSettingsSheet());
+
+/* ---------- Instellingen en thema (fase 2h, B32/B33) ---------- */
+
+const THEME_KEY = 'boekenlijst.theme';
+const THEME_COLOR = { light: '#f6f4ef', dark: '#161917' };
+const THEMES = [
+  ['system', 'Systeem', 'device-mobile'],
+  ['light', 'Licht', 'sun'],
+  ['dark', 'Donker', 'moon']
+];
+
+function getTheme() {
+  let t = null;
+  try { t = localStorage.getItem(THEME_KEY); } catch (_) { /* geblokkeerd: standaard */ }
+  return t === 'light' || t === 'dark' ? t : 'system';
+}
+
+// Zelfde werking als het inline script in <head>, maar dan tijdens gebruik
+function applyTheme(t) {
+  const root = document.documentElement;
+  if (t === 'light' || t === 'dark') root.dataset.theme = t;
+  else delete root.dataset.theme;
+  // Statusbalk: bij Systeem elke tag zijn eigen kleur (media), anders beide gelijk
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+    const ownColor = (m.getAttribute('media') || '').includes('dark') ? THEME_COLOR.dark : THEME_COLOR.light;
+    m.setAttribute('content', THEME_COLOR[t] || ownColor);
+  });
+}
+
+function setTheme(t) {
+  try {
+    if (t === 'system') localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, t);
+  } catch (_) { /* geblokkeerd: geldt dan alleen tot herladen */ }
+  applyTheme(t);
+}
+
+// Versienummer van deze levering = ?v= van app.js (staat in index.html)
+function appVersion() {
+  const src = document.querySelector('script[src*="app.js"]')?.getAttribute('src') || '';
+  return new URLSearchParams(src.split('?')[1] || '').get('v') || '';
+}
+
+function openSettingsSheet() {
+  if (sheet.open || !state.user) return;
+  sheet.mode = 'settings';
+  sheet.list = null;
+  $('#sheet-title').textContent = 'Instellingen';
+  $('#sheet-sub').textContent = '';
+  $('#sheet-clear').hidden = true;
+  $('#sheet-done').textContent = 'Sluiten';
+  sheet.open = true;
+  renderSettingsSheet();
+  showSheetPanel();
+}
+
+function renderSettingsSheet() {
+  const cur = getTheme();
+  const v = appVersion();
+  $('#sheet-body').innerHTML = `
+    <h3>Account</h3>
+    <p class="set-account">Ingelogd als
+      <span class="set-email" title="${esc(state.user?.email ?? '')}">${esc(state.user?.email ?? '')}</span></p>
+    <h3 id="set-theme">Thema</h3>
+    <div class="theme-seg" role="radiogroup" aria-labelledby="set-theme">${
+      THEMES.map(([val, label, ic]) =>
+        `<button type="button" role="radio" aria-checked="${val === cur}" data-theme-choice="${val}">${icon(ic)}<span>${label}</span></button>`
+      ).join('')}</div>
+    <h3>Uitloggen</h3>
+    <button type="button" class="btn-logout" data-settings="logout">${icon('logout')}<span>Uitloggen</span></button>
+    ${v ? `<p class="set-version">Versie ${esc(v)}</p>` : ''}`;
+}
+
+async function onSettingsClick(e) {
+  const choice = e.target.closest('[data-theme-choice]')?.dataset.themeChoice;
+  if (choice) {
+    setTheme(choice);
+    $('#sheet-body').querySelectorAll('[data-theme-choice]').forEach((b) => {
+      b.setAttribute('aria-checked', String(b.dataset.themeChoice === choice));
+    });
+    return;
+  }
+  if (e.target.closest('[data-settings="logout"]')) {
+    const btn = e.target.closest('button');
+    btn.disabled = true;
+    const { error } = await sb.auth.signOut();
+    btn.disabled = false;
+    if (error) { toast('Uitloggen mislukt: ' + error.message); return; }
+    closeSheet();
+    showTab('bezig');
+  }
+}
 
 /* ---------- Gegevens laden ---------- */
 
@@ -699,8 +792,9 @@ document.addEventListener('click', (e) => {
 
 /* ---------- Onderpaneel ---------- */
 
-// Eén onderpaneel voor twee doelen: sorteren/filteren (mode 'filter', fase 2c)
-// en het deelvenster van de deellijst (mode 'share', fase 2e)
+// Eén onderpaneel voor drie doelen: sorteren/filteren (mode 'filter', fase 2c),
+// het deelvenster van de deellijst (mode 'share', fase 2e) en de instellingen
+// (mode 'settings', fase 2h)
 const sheet = {
   open: false,
   mode: 'filter',
@@ -782,6 +876,7 @@ function renderSheet() {
 function updateSheetSummary() {
   if (!sheet.open) return;
   if (sheet.mode === 'share') { updateShareSheet(); return; }
+  if (sheet.mode === 'settings') return; // vaste inhoud, niets bij te werken
   const list = sheet.list;
   const total = baseBooks(list).length;
   const n = applyFilters(list, baseBooks(list)).length;
@@ -858,6 +953,7 @@ window.addEventListener('popstate', () => { if (sheet.open) closeSheet(true); })
 
 $('#sheet-body').addEventListener('click', (e) => {
   if (sheet.mode === 'share') { onShareSheetClick(e); return; }
+  if (sheet.mode === 'settings') { onSettingsClick(e); return; }
   const btn = e.target.closest('button[data-group]');
   if (!btn || !sheet.open) return;
   const list = sheet.list;
@@ -883,12 +979,13 @@ $('#sheet-body').addEventListener('click', (e) => {
 });
 
 $('#sheet-body').addEventListener('change', (e) => {
-  if (sheet.mode === 'share') { onShareSheetChange(e); return; }
+  if (sheet.mode !== 'filter') { if (sheet.mode === 'share') onShareSheetChange(e); return; }
   const key = e.target.dataset?.filter;
   if (key && sheet.open) setFilter(sheet.list, key, e.target.value);
 });
 
 $('#sheet-body').addEventListener('input', (e) => {
+  if (sheet.mode !== 'filter') return;
   if (e.target.id === 'flt-text' && sheet.open) setFilter(sheet.list, 'text', e.target.value);
 });
 

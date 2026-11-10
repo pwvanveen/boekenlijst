@@ -14,8 +14,24 @@
   --mask-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 6l6 6l-6 6'/%3E%3C/svg%3E");
   --mask-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5l10 -10'/%3E%3C/svg%3E");
 }
+/* Thema (fase 2h, B33): zonder data-theme volgt de app de telefoon (Systeem);
+   data-theme="light" / "dark" op <html> legt het vast. Donkere regels daarom
+   steeds twee keer: bij een vaste keuze én bij de systeemstand. */
+:root { color-scheme: light dark; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #161917;
+  --card: #20241f;
+  --text: #e9ebe7;
+  --muted: #9aa19c;
+  --line: #333833;
+  --accent: #6fae99;
+  --accent-text: #0f1311;
+  --danger: #ff8a80;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #161917;
     --card: #20241f;
     --text: #e9ebe7;
@@ -46,8 +62,13 @@ body {
 }
 .topbar h1 { margin: 0; font-size: 1.15rem; }
 .topbar-right { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.user-email { font-size: .8rem; opacity: .85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45vw; }
-.topbar .link { color: inherit; }
+/* Tandwiel (fase 2h, B32) */
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; padding: 0; margin: -8px -8px -8px 0;
+  border: none; border-radius: 50%; background: transparent; color: inherit;
+}
+.icon-btn:active { background: rgba(127, 127, 127, .22); }
 
 main {
   max-width: 640px; margin: 0 auto;
@@ -159,8 +180,9 @@ button:disabled { opacity: .6; cursor: default; }
 .dlg-head .cover-empty { padding: 7px 5px 5px 9px; }
 .dlg-head .ph-title { font-size: .7rem; -webkit-line-clamp: 5; }
 .dlg-head .ph-author { font-size: .55rem; }
+:root[data-theme="dark"] .cover-empty { background: hsl(var(--hue) 25% 30%); }
 @media (prefers-color-scheme: dark) {
-  .cover-empty { background: hsl(var(--hue) 25% 30%); }
+  :root:not([data-theme="light"]) .cover-empty { background: hsl(var(--hue) 25% 30%); }
 }
 .info { min-width: 0; flex: 1; }
 .title { font-weight: 600; }
@@ -317,7 +339,8 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 
 /* Melding met actieknop (Ongedaan maken, fase 2d) */
 :root { --toast-action: #9fd8c4; }
-@media (prefers-color-scheme: dark) { :root { --toast-action: #2f5d50; } }
+:root[data-theme="dark"] { --toast-action: #2f5d50; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --toast-action: #2f5d50; } }
 #toast.has-action { border-radius: 12px; padding: 6px 6px 6px 16px; width: max-content; }
 #toast.has-action.show { pointer-events: auto; }
 .toast-action {
@@ -472,3 +495,28 @@ input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2
     font-style: italic; color: #222; overflow-wrap: anywhere;
   }
 }
+
+/* =========================================================
+   Instellingen (fase 2h, B32/B33) – onderpaneel in modus "settings"
+   ========================================================= */
+.set-account { margin: 4px 0 0; color: var(--muted); font-size: .9rem; }
+.set-email {
+  display: block; color: var(--text); font-weight: 600; font-size: 1rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.theme-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.theme-seg button {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 4px; font-size: .9rem; min-width: 0;
+}
+.theme-seg button .i { color: var(--muted); }
+.theme-seg button[aria-checked="true"] {
+  background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600;
+}
+.theme-seg button[aria-checked="true"] .i { color: var(--accent-text); }
+.btn-logout {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; margin-top: 4px;
+  color: var(--danger); border-color: var(--line); background: var(--card); font-weight: 600;
+}
+.set-version { margin: 18px 0 2px; text-align: center; color: var(--muted); font-size: .75rem; }
